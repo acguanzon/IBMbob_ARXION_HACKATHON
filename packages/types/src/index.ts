@@ -18,17 +18,29 @@ export type TaskPriority = z.infer<typeof TaskPrioritySchema>;
 export const ProjectMemberRoleSchema = z.enum(['OWNER', 'MEMBER', 'VIEWER']);
 export type ProjectMemberRole = z.infer<typeof ProjectMemberRoleSchema>;
 
-export const FileReservationStatusSchema = z.enum(['ACTIVE', 'RELEASED', 'CONFLICT']);
+export const FileReservationStatusSchema = z.enum(['ACTIVE', 'RELEASED', 'CONFLICT', 'EXPIRED']);
 export type FileReservationStatus = z.infer<typeof FileReservationStatusSchema>;
 
 export const AgentTypeSchema = z.enum(['IBM_BOB', 'CURSOR', 'CLAUDE_CODE', 'OTHER']);
 export type AgentType = z.infer<typeof AgentTypeSchema>;
 
-export const AgentSessionStatusSchema = z.enum(['IDLE', 'WORKING', 'WAITING', 'FINISHED']);
+export const AgentSessionStatusSchema = z.enum([
+  'IDLE',
+  'WORKING',
+  'WAITING',
+  'FINISHED',
+  'STALE',
+]);
 export type AgentSessionStatus = z.infer<typeof AgentSessionStatusSchema>;
 
 export const ReviewStatusSchema = z.enum(['PENDING', 'APPROVED', 'CHANGES_REQUESTED']);
 export type ReviewStatus = z.infer<typeof ReviewStatusSchema>;
+
+export const ContractTypeSchema = z.enum(['API', 'MODEL', 'SCHEMA', 'TYPE', 'EVENT', 'OTHER']);
+export type ContractType = z.infer<typeof ContractTypeSchema>;
+
+export const ContractRelationshipSchema = z.enum(['PROVIDES', 'MODIFIES', 'CONSUMES']);
+export type ContractRelationship = z.infer<typeof ContractRelationshipSchema>;
 
 // ─── Core Schemas ─────────────────────────────────────────────────────────────
 
@@ -95,6 +107,7 @@ export const TaskFileReservationSchema = z.object({
   filePath: z.string(),
   status: FileReservationStatusSchema,
   reservedAt: z.coerce.date(),
+  leaseExpiresAt: z.coerce.date().nullable(),
   releasedAt: z.coerce.date().nullable(),
 });
 export type TaskFileReservation = z.infer<typeof TaskFileReservationSchema>;
@@ -137,6 +150,32 @@ export const ReviewSchema = z.object({
 });
 export type Review = z.infer<typeof ReviewSchema>;
 
+export const TaskContractSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  taskId: z.string(),
+  type: ContractTypeSchema,
+  name: z.string(),
+  relationship: ContractRelationshipSchema,
+  metadata: z.record(z.unknown()).nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type TaskContract = z.infer<typeof TaskContractSchema>;
+
+export const TaskWorkIntentSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  files: z.array(z.string()),
+  apis: z.array(z.string()),
+  models: z.array(z.string()),
+  contracts: z.array(z.string()),
+  summary: z.string().nullable(),
+  declaredAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
+});
+export type TaskWorkIntent = z.infer<typeof TaskWorkIntentSchema>;
+
 // ─── Request / Response Schemas ───────────────────────────────────────────────
 
 export const CreateProjectBodySchema = z.object({
@@ -165,6 +204,58 @@ export const UpdateTaskBodySchema = z.object({
 });
 export type UpdateTaskBody = z.infer<typeof UpdateTaskBodySchema>;
 
+export const ClaimTaskBodySchema = z.object({
+  userId: z.string().min(1),
+});
+export type ClaimTaskBody = z.infer<typeof ClaimTaskBodySchema>;
+
+export const CreateAgentSessionBodySchema = z.object({
+  projectId: z.string().min(1),
+  userId: z.string().min(1),
+  taskId: z.string().optional(),
+  agentType: AgentTypeSchema.optional().default('IBM_BOB'),
+  externalAgentId: z.string().optional(),
+});
+export type CreateAgentSessionBody = z.infer<typeof CreateAgentSessionBodySchema>;
+
+export const ReserveFilesBodySchema = z.object({
+  userId: z.string().min(1),
+  agentSessionId: z.string().optional(),
+  filePaths: z.array(z.string().min(1)).min(1).max(50),
+  leaseDurationSeconds: z.number().int().min(30).max(3600).optional().default(120),
+});
+export type ReserveFilesBody = z.infer<typeof ReserveFilesBodySchema>;
+
+export const ReleaseFilesBodySchema = z.object({
+  userId: z.string().min(1),
+  filePaths: z.array(z.string().min(1)).min(1),
+});
+export type ReleaseFilesBody = z.infer<typeof ReleaseFilesBodySchema>;
+
+export const DeclareWorkIntentBodySchema = z.object({
+  files: z.array(z.string()).default([]),
+  apis: z.array(z.string()).default([]),
+  models: z.array(z.string()).default([]),
+  contracts: z.array(z.string()).default([]),
+  summary: z.string().max(1000).optional(),
+});
+export type DeclareWorkIntentBody = z.infer<typeof DeclareWorkIntentBodySchema>;
+
+export const DeclareContractBodySchema = z.object({
+  type: ContractTypeSchema,
+  name: z.string().min(1).max(200),
+  relationship: ContractRelationshipSchema,
+  metadata: z.record(z.unknown()).optional(),
+});
+export type DeclareContractBody = z.infer<typeof DeclareContractBodySchema>;
+
+export const ReportProgressBodySchema = z.object({
+  userId: z.string().min(1),
+  message: z.string().min(1).max(2000),
+  agentSessionId: z.string().optional(),
+});
+export type ReportProgressBody = z.infer<typeof ReportProgressBodySchema>;
+
 // ─── Extended / Rich Schemas (with relations) ──────────────────────────────────
 
 export const TaskWithRelationsSchema = TaskSchema.extend({
@@ -188,6 +279,50 @@ export const ProjectWithMembersSchema = ProjectSchema.extend({
 });
 export type ProjectWithMembers = z.infer<typeof ProjectWithMembersSchema>;
 
+// ─── Coordination types ────────────────────────────────────────────────────────
+
+export interface FileConflict {
+  filePath: string;
+  existingReservation: {
+    id: string;
+    userId: string;
+    userName: string;
+    taskId: string;
+    taskDisplayId: string;
+    agentSessionId: string | null;
+    reservedAt: Date;
+    leaseExpiresAt: Date | null;
+  };
+}
+
+export interface ContractRisk {
+  contractName: string;
+  contractType: string;
+  sourceTaskId: string;
+  sourceTaskDisplayId: string;
+  sourceRelationship: ContractRelationship;
+  affectedTaskId: string;
+  affectedTaskDisplayId: string;
+  affectedRelationship: ContractRelationship;
+}
+
+export interface CoordinationPreflight {
+  task: Task & { assignee: User | null };
+  sessionId: string;
+  dependencies: Array<{ task: Task; isBlocked: boolean }>;
+  activeTeammates: Array<{
+    userId: string;
+    userName: string;
+    taskId: string;
+    taskDisplayId: string;
+    agentType: AgentType;
+    status: AgentSessionStatus;
+  }>;
+  fileConflicts: FileConflict[];
+  contractRisks: ContractRisk[];
+  coordinationStatus: 'READY' | 'READY_WITH_WARNINGS' | 'BLOCKED';
+}
+
 // ─── API Response Wrappers ────────────────────────────────────────────────────
 
 export const ApiSuccessSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
@@ -204,15 +339,14 @@ export const ApiErrorSchema = z.object({
     details: z.unknown().optional(),
   }),
 });
-
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 
 // ─── Domain Event Types ────────────────────────────────────────────────────────
-// Lightweight event type used by the realtime layer
 
 export type DomainEventType =
   | 'task.created'
   | 'task.claimed'
+  | 'task.released'
   | 'task.started'
   | 'task.updated'
   | 'task.progress'
@@ -221,9 +355,14 @@ export type DomainEventType =
   | 'file.reserved'
   | 'file.released'
   | 'file.conflict'
+  | 'file.expired'
   | 'agent.started'
-  | 'agent.updated'
+  | 'agent.heartbeat'
+  | 'agent.stale'
   | 'agent.ended'
+  | 'agent.updated'
+  | 'contract.declared'
+  | 'contract.risk_detected'
   | 'member.joined';
 
 export interface DomainEvent<T = unknown> {
