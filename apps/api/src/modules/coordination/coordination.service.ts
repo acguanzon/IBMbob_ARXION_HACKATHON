@@ -181,7 +181,7 @@ export async function beginTask(
       : 'READY';
 
   return {
-    task: freshTask as typeof freshTask & { assignee: typeof freshTask.assignee },
+    task: freshTask! as typeof freshTask & { assignee: NonNullable<typeof freshTask>['assignee'] },
     sessionId: session.id,
     dependencies,
     activeTeammates,
@@ -274,7 +274,7 @@ export async function declareContract(taskId: string, body: DeclareContractBody)
       type: body.type,
       name: body.name,
       relationship: body.relationship,
-      metadata: body.metadata ?? null,
+      metadata: body.metadata ? JSON.parse(JSON.stringify(body.metadata)) : undefined,
     },
   });
 

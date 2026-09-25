@@ -1,5 +1,5 @@
 // Prisma schema for Arxion — Agent-agnostic collaboration platform
-// Phase 2: Multi-Agent Coordination
+// Phase 3: Review, Merge Readiness, Completion, and Context Propagation
 
 generator client {
   provider = "prisma-client-js"
@@ -56,10 +56,15 @@ enum AgentSessionStatus {
   STALE
 }
 
+// Phase 3: Expanded review status
 enum ReviewStatus {
   PENDING
-  APPROVED
+  IN_REVIEW
   CHANGES_REQUESTED
+  APPROVED
+  INVALIDATED
+  REJECTED
+  SUPERSEDED
 }
 
 enum ContractType {
@@ -77,6 +82,65 @@ enum ContractRelationship {
   CONSUMES
 }
 
+// Phase 3: Contract lifecycle status
+enum ContractVersionStatus {
+  DRAFT
+  ACTIVE
+  DEPRECATED
+  SUPERSEDED
+}
+
+// Phase 3: Review finding source
+enum ReviewFindingSource {
+  AI
+  HUMAN
+  SYSTEM
+}
+
+// Phase 3: Review finding category
+enum ReviewFindingCategory {
+  GENERAL
+  FILE
+  CONTRACT
+  TEST
+  ARCHITECTURE
+  SECURITY
+  DEPENDENCY
+  SCOPE
+}
+
+// Phase 3: Review finding severity
+enum ReviewFindingSeverity {
+  INFO
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Phase 3: Review finding resolution status
+enum ReviewFindingStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+// Phase 3: Merge status
+enum MergeStatus {
+  NOT_STARTED
+  READY
+  MERGED
+  FAILED
+  CANCELLED
+}
+
+// Phase 3: Project decision status
+enum ProjectDecisionStatus {
+  ACTIVE
+  SUPERSEDED
+  DEPRECATED
+}
+
 // ─── Models ──────────────────────────────────────────────────────────────────
 
 model User {
@@ -86,14 +150,17 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  projectMemberships ProjectMember[]
-  createdProjects    Project[]             @relation("CreatedByUser")
-  assignedTasks      Task[]                @relation("AssignedTasks")
-  createdTasks       Task[]                @relation("CreatedTasks")
-  fileReservations   TaskFileReservation[]
-  agentSessions      AgentSession[]
-  taskActivities     TaskActivity[]
-  reviews            Review[]
+  projectMemberships  ProjectMember[]
+  createdProjects     Project[]              @relation("CreatedByUser")
+  assignedTasks       Task[]                 @relation("AssignedTasks")
+  createdTasks        Task[]                 @relation("CreatedTasks")
+  fileReservations    TaskFileReservation[]
+  agentSessions       AgentSession[]
+  taskActivities      TaskActivity[]
+  reviews             Review[]
+  approvedReviews     Review[]               @relation("ApprovedReviews")
+  reviewFindings      ReviewFinding[]
+  projectDecisions    ProjectDecision[]      @relation("CreatedDecisions")
 
   @@map("users")
 }
@@ -114,6 +181,7 @@ model Project {
   agentSessions    AgentSession[]
   taskActivities   TaskActivity[]
   taskContracts    TaskContract[]
+  projectDecisions ProjectDecision[]
 
   @@map("projects")
 }
@@ -147,17 +215,21 @@ model Task {
   startedAt   DateTime?
   completedAt DateTime?
 
-  project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  assignee         User?                 @relation("AssignedTasks", fields: [assigneeId], references: [id])
-  createdBy        User                  @relation("CreatedTasks", fields: [createdById], references: [id])
-  dependencies     TaskDependency[]      @relation("TaskDependencies")
-  dependents       TaskDependency[]      @relation("DependentTasks")
-  fileReservations TaskFileReservation[]
-  agentSessions    AgentSession[]
-  taskActivities   TaskActivity[]
-  reviews          Review[]
-  contracts        TaskContract[]
-  workIntents      TaskWorkIntent[]
+  project           Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee          User?                  @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  createdBy         User                   @relation("CreatedTasks", fields: [createdById], references: [id])
+  dependencies      TaskDependency[]       @relation("TaskDependencies")
+  dependents        TaskDependency[]       @relation("DependentTasks")
+  fileReservations  TaskFileReservation[]
+  agentSessions     AgentSession[]
+  taskActivities    TaskActivity[]
+  reviews           Review[]
+  contracts         TaskContract[]
+  workIntents       TaskWorkIntent[]
+  completionReports TaskCompletionReport[]
+  gitLinks          TaskGitLink[]
+  contractVersions  ContractVersion[]
+  projectDecisions  ProjectDecision[]      @relation("TaskDecisions")
 
   @@unique([projectId, displayId])
   @@map("tasks")
@@ -208,11 +280,12 @@ model AgentSession {
   endedAt         DateTime?
   lastSeenAt      DateTime           @default(now())
 
-  project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user             User                  @relation(fields: [userId], references: [id])
-  task             Task?                 @relation(fields: [taskId], references: [id])
-  fileReservations TaskFileReservation[]
-  taskActivities   TaskActivity[]
+  project             Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user                User                  @relation(fields: [userId], references: [id])
+  task                Task?                 @relation(fields: [taskId], references: [id])
+  fileReservations    TaskFileReservation[]
+  taskActivities      TaskActivity[]
+  completionReports   TaskCompletionReport[]
 
   @@map("agent_sessions")
 }
@@ -236,19 +309,155 @@ model TaskActivity {
   @@map("task_activities")
 }
 
+/// Phase 3: Full review with lifecycle state machine
 model Review {
-  id         String       @id @default(cuid())
-  taskId     String
-  reviewerId String
-  status     ReviewStatus @default(PENDING)
-  comment    String?
-  createdAt  DateTime     @default(now())
-  updatedAt  DateTime     @updatedAt
+  id                 String       @id @default(cuid())
+  taskId             String
+  requestedById      String
+  status             ReviewStatus @default(PENDING)
+  reviewVersion      Int          @default(1)
+  reviewRevision     String?      // git commit SHA at time of review
+  comment            String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  approvedAt         DateTime?
+  approvedById       String?
+  invalidatedAt      DateTime?
+  invalidationReason String?
 
-  task     Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
-  reviewer User @relation(fields: [reviewerId], references: [id])
+  task          Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requestedBy   User            @relation(fields: [requestedById], references: [id])
+  approvedBy    User?           @relation("ApprovedReviews", fields: [approvedById], references: [id])
+  snapshot      ReviewSnapshot?
+  findings      ReviewFinding[]
 
   @@map("reviews")
+}
+
+/// Phase 3: Immutable snapshot of work at the time review was requested
+model ReviewSnapshot {
+  id                      String   @id @default(cuid())
+  reviewId                String   @unique
+  taskId                  String
+  workRevision            String   // git commit SHA
+  gitCommitSha            String?
+  branchName              String?
+  completionReportId      String?
+  declaredIntentSnapshot  Json?    // copy of TaskWorkIntent at review time
+  contractSnapshot        Json?    // copy of declared contracts at review time
+  fileSnapshot            Json?    // list of files changed
+  testSnapshot            Json?    // test results
+  createdAt               DateTime @default(now())
+
+  review           Review                @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  completionReport TaskCompletionReport? @relation(fields: [completionReportId], references: [id])
+
+  @@map("review_snapshots")
+}
+
+/// Phase 3: Agent-submitted evidence before requesting review
+model TaskCompletionReport {
+  id              String   @id @default(cuid())
+  taskId          String
+  agentSessionId  String?
+  summary         String
+  filesChanged    String[]
+  contractsChanged String[]
+  testsRun        Int      @default(0)
+  testsPassed     Int      @default(0)
+  testsFailed     Int      @default(0)
+  knownIssues     String?
+  scopeChanges    String?
+  workRevision    String   // git commit SHA or manual revision identifier
+  createdAt       DateTime @default(now())
+
+  task         Task           @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agentSession AgentSession?  @relation(fields: [agentSessionId], references: [id])
+  snapshots    ReviewSnapshot[]
+
+  @@map("task_completion_reports")
+}
+
+/// Phase 3: Structured finding from AI, human, or system
+model ReviewFinding {
+  id            String                @id @default(cuid())
+  reviewId      String
+  source        ReviewFindingSource
+  category      ReviewFindingCategory @default(GENERAL)
+  severity      ReviewFindingSeverity @default(MEDIUM)
+  title         String
+  description   String
+  filePath      String?
+  contractName  String?
+  status        ReviewFindingStatus   @default(OPEN)
+  isBlocking    Boolean               @default(false)
+  createdById   String?
+  createdAt     DateTime              @default(now())
+  resolvedAt    DateTime?
+
+  review    Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation(fields: [createdById], references: [id])
+
+  @@map("review_findings")
+}
+
+/// Phase 3: Git revision binding for a task
+model TaskGitLink {
+  id                String      @id @default(cuid())
+  taskId            String
+  repositoryUrl     String?
+  branchName        String?
+  baseBranch        String?
+  latestCommitSha   String?
+  pullRequestUrl    String?
+  pullRequestNumber Int?
+  mergeStatus       MergeStatus @default(NOT_STARTED)
+  mergedCommitSha   String?
+  mergedAt          DateTime?
+  updatedAt         DateTime    @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("task_git_links")
+}
+
+/// Phase 3: Contract version lifecycle
+model ContractVersion {
+  id          String                @id @default(cuid())
+  contractId  String                // references TaskContract.id
+  taskId      String
+  version     Int
+  status      ContractVersionStatus @default(DRAFT)
+  schema      Json?
+  metadata    Json?
+  createdAt   DateTime              @default(now())
+  activatedAt DateTime?
+
+  task     Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  contract TaskContract @relation(fields: [contractId], references: [id], onDelete: Cascade)
+
+  @@map("contract_versions")
+}
+
+/// Phase 3: Project decision log
+model ProjectDecision {
+  id              String                @id @default(cuid())
+  projectId       String
+  taskId          String?
+  title           String
+  decision        String
+  reason          String?
+  createdById     String
+  agentSessionId  String?
+  status          ProjectDecisionStatus @default(ACTIVE)
+  createdAt       DateTime              @default(now())
+  supersededById  String?
+
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task      Task?   @relation("TaskDecisions", fields: [taskId], references: [id])
+  createdBy User    @relation("CreatedDecisions", fields: [createdById], references: [id])
+
+  @@map("project_decisions")
 }
 
 // ─── Phase 2 New Models ────────────────────────────────────────────────────────
@@ -266,8 +475,9 @@ model TaskContract {
   createdAt    DateTime             @default(now())
   updatedAt    DateTime             @updatedAt
 
-  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  task    Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task             Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  contractVersions ContractVersion[]
 
   @@map("task_contracts")
 }

@@ -4,6 +4,7 @@ import {
   UpdateTaskBodySchema,
   ClaimTaskBodySchema,
   ReportProgressBodySchema,
+  CompleteTaskBodySchema,
 } from '@arxion/types';
 import {
   createTask,
@@ -16,6 +17,7 @@ import {
   getTaskDependencies,
   getTaskBlockers,
 } from './task.service.js';
+import { completeTask } from './complete-task.service.js';
 import { requireProject } from '../projects/project.service.js';
 
 export async function taskRoutes(app: FastifyInstance): Promise<void> {
@@ -120,13 +122,11 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     await reply.status(501).send({ success: false, error: { code: 'USE_BEGIN_TASK', message: `Use begin_task MCP tool or POST /tasks/${taskId}/claim then /coordination/begin` } });
   });
 
-  // POST /tasks/:taskId/request-review — Phase 3
-  app.post('/tasks/:taskId/request-review', async (_req, reply: FastifyReply) => {
-    await reply.status(501).send({ success: false, error: { code: 'NOT_IMPLEMENTED', message: 'Available in Phase 3' } });
-  });
-
   // POST /tasks/:taskId/complete — Phase 3
-  app.post('/tasks/:taskId/complete', async (_req, reply: FastifyReply) => {
-    await reply.status(501).send({ success: false, error: { code: 'NOT_IMPLEMENTED', message: 'Available in Phase 3' } });
+  app.post('/tasks/:taskId/complete', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { taskId } = req.params as { taskId: string };
+    const body = CompleteTaskBodySchema.parse(req.body);
+    const result = await completeTask(taskId, body);
+    await reply.status(200).send({ success: true, data: result });
   });
 }

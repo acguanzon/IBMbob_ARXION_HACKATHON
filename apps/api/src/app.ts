@@ -8,6 +8,11 @@ import { agentSessionRoutes } from './modules/agent-sessions/agent-session.route
 import { fileReservationRoutes } from './modules/file-reservations/file-reservation.routes.js';
 import { activityRoutes } from './modules/activity/activity.routes.js';
 import { coordinationRoutes } from './modules/coordination/coordination.routes.js';
+import { completionReportRoutes } from './modules/completion-reports/completion-report.routes.js';
+import { reviewRoutes } from './modules/reviews/review.routes.js';
+import { reviewFindingRoutes } from './modules/reviews/review-findings.routes.js';
+import { gitRoutes } from './modules/git/git.routes.js';
+import { decisionRoutes } from './modules/decisions/decision.routes.js';
 import { errorHandler } from './lib/error-handler.js';
 import { startStalenessWatcher } from './lib/staleness-watcher.js';
 import { realtimeEmitter } from './lib/realtime.js';
@@ -35,6 +40,12 @@ export async function buildApp() {
   await app.register(fileReservationRoutes);
   await app.register(activityRoutes);
   await app.register(coordinationRoutes);
+  // Phase 3
+  await app.register(completionReportRoutes);
+  await app.register(reviewRoutes);
+  await app.register(reviewFindingRoutes);
+  await app.register(gitRoutes);
+  await app.register(decisionRoutes);
 
   // Attach Socket.IO and start background jobs after server is ready
   app.addHook('onReady', () => {

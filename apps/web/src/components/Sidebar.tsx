@@ -19,6 +19,30 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
         <p className="mt-0.5 text-xs text-slate-400">Agent Collaboration Platform</p>
       </div>
 
+      {/* Navigation */}
+      <div className="px-3 pt-4">
+        <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Navigation
+        </p>
+        <ul className="space-y-0.5">
+          <li>
+            <a href="/dashboard" className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-50">
+              <span>📋</span> Board
+            </a>
+          </li>
+          <li>
+            <a href="/dashboard/reviews" className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-50">
+              <span>🔍</span> Reviews
+            </a>
+          </li>
+          <li>
+            <a href="/dashboard/decisions" className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm text-slate-600 hover:bg-slate-50">
+              <span>📝</span> Decisions
+            </a>
+          </li>
+        </ul>
+      </div>
+
       {/* Projects */}
       <div className="px-3 pt-4">
         <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
@@ -71,7 +95,7 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
 
       {/* Footer */}
       <div className="mt-auto border-t border-slate-200 px-4 py-3">
-        <p className="text-xs text-slate-400">Phase 1 MVP</p>
+        <p className="text-xs text-slate-400">Phase 3</p>
       </div>
     </aside>
   );

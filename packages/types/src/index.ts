@@ -33,7 +33,16 @@ export const AgentSessionStatusSchema = z.enum([
 ]);
 export type AgentSessionStatus = z.infer<typeof AgentSessionStatusSchema>;
 
-export const ReviewStatusSchema = z.enum(['PENDING', 'APPROVED', 'CHANGES_REQUESTED']);
+// Phase 3: Expanded review status
+export const ReviewStatusSchema = z.enum([
+  'PENDING',
+  'IN_REVIEW',
+  'CHANGES_REQUESTED',
+  'APPROVED',
+  'INVALIDATED',
+  'REJECTED',
+  'SUPERSEDED',
+]);
 export type ReviewStatus = z.infer<typeof ReviewStatusSchema>;
 
 export const ContractTypeSchema = z.enum(['API', 'MODEL', 'SCHEMA', 'TYPE', 'EVENT', 'OTHER']);
@@ -41,6 +50,49 @@ export type ContractType = z.infer<typeof ContractTypeSchema>;
 
 export const ContractRelationshipSchema = z.enum(['PROVIDES', 'MODIFIES', 'CONSUMES']);
 export type ContractRelationship = z.infer<typeof ContractRelationshipSchema>;
+
+// Phase 3
+export const ContractVersionStatusSchema = z.enum(['DRAFT', 'ACTIVE', 'DEPRECATED', 'SUPERSEDED']);
+export type ContractVersionStatus = z.infer<typeof ContractVersionStatusSchema>;
+
+export const ReviewFindingSourceSchema = z.enum(['AI', 'HUMAN', 'SYSTEM']);
+export type ReviewFindingSource = z.infer<typeof ReviewFindingSourceSchema>;
+
+export const ReviewFindingCategorySchema = z.enum([
+  'GENERAL',
+  'FILE',
+  'CONTRACT',
+  'TEST',
+  'ARCHITECTURE',
+  'SECURITY',
+  'DEPENDENCY',
+  'SCOPE',
+]);
+export type ReviewFindingCategory = z.infer<typeof ReviewFindingCategorySchema>;
+
+export const ReviewFindingSeveritySchema = z.enum([
+  'INFO',
+  'LOW',
+  'MEDIUM',
+  'HIGH',
+  'CRITICAL',
+]);
+export type ReviewFindingSeverity = z.infer<typeof ReviewFindingSeveritySchema>;
+
+export const ReviewFindingStatusSchema = z.enum(['OPEN', 'RESOLVED', 'DISMISSED']);
+export type ReviewFindingStatus = z.infer<typeof ReviewFindingStatusSchema>;
+
+export const MergeStatusSchema = z.enum([
+  'NOT_STARTED',
+  'READY',
+  'MERGED',
+  'FAILED',
+  'CANCELLED',
+]);
+export type MergeStatus = z.infer<typeof MergeStatusSchema>;
+
+export const ProjectDecisionStatusSchema = z.enum(['ACTIVE', 'SUPERSEDED', 'DEPRECATED']);
+export type ProjectDecisionStatus = z.infer<typeof ProjectDecisionStatusSchema>;
 
 // ─── Core Schemas ─────────────────────────────────────────────────────────────
 
@@ -139,16 +191,124 @@ export const TaskActivitySchema = z.object({
 });
 export type TaskActivity = z.infer<typeof TaskActivitySchema>;
 
+// Phase 3: Full review schema
 export const ReviewSchema = z.object({
   id: z.string(),
   taskId: z.string(),
-  reviewerId: z.string(),
+  requestedById: z.string(),
   status: ReviewStatusSchema,
+  reviewVersion: z.number().int(),
+  reviewRevision: z.string().nullable(),
   comment: z.string().nullable(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
+  approvedAt: z.coerce.date().nullable(),
+  approvedById: z.string().nullable(),
+  invalidatedAt: z.coerce.date().nullable(),
+  invalidationReason: z.string().nullable(),
 });
 export type Review = z.infer<typeof ReviewSchema>;
+
+// Phase 3: Immutable review snapshot
+export const ReviewSnapshotSchema = z.object({
+  id: z.string(),
+  reviewId: z.string(),
+  taskId: z.string(),
+  workRevision: z.string(),
+  gitCommitSha: z.string().nullable(),
+  branchName: z.string().nullable(),
+  completionReportId: z.string().nullable(),
+  declaredIntentSnapshot: z.record(z.unknown()).nullable(),
+  contractSnapshot: z.record(z.unknown()).nullable(),
+  fileSnapshot: z.record(z.unknown()).nullable(),
+  testSnapshot: z.record(z.unknown()).nullable(),
+  createdAt: z.coerce.date(),
+});
+export type ReviewSnapshot = z.infer<typeof ReviewSnapshotSchema>;
+
+// Phase 3: Completion report
+export const TaskCompletionReportSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  agentSessionId: z.string().nullable(),
+  summary: z.string(),
+  filesChanged: z.array(z.string()),
+  contractsChanged: z.array(z.string()),
+  testsRun: z.number().int(),
+  testsPassed: z.number().int(),
+  testsFailed: z.number().int(),
+  knownIssues: z.string().nullable(),
+  scopeChanges: z.string().nullable(),
+  workRevision: z.string(),
+  createdAt: z.coerce.date(),
+});
+export type TaskCompletionReport = z.infer<typeof TaskCompletionReportSchema>;
+
+// Phase 3: Review finding
+export const ReviewFindingSchema = z.object({
+  id: z.string(),
+  reviewId: z.string(),
+  source: ReviewFindingSourceSchema,
+  category: ReviewFindingCategorySchema,
+  severity: ReviewFindingSeveritySchema,
+  title: z.string(),
+  description: z.string(),
+  filePath: z.string().nullable(),
+  contractName: z.string().nullable(),
+  status: ReviewFindingStatusSchema,
+  isBlocking: z.boolean(),
+  createdById: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  resolvedAt: z.coerce.date().nullable(),
+});
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
+
+// Phase 3: Git link
+export const TaskGitLinkSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  repositoryUrl: z.string().nullable(),
+  branchName: z.string().nullable(),
+  baseBranch: z.string().nullable(),
+  latestCommitSha: z.string().nullable(),
+  pullRequestUrl: z.string().nullable(),
+  pullRequestNumber: z.number().int().nullable(),
+  mergeStatus: MergeStatusSchema,
+  mergedCommitSha: z.string().nullable(),
+  mergedAt: z.coerce.date().nullable(),
+  updatedAt: z.coerce.date(),
+});
+export type TaskGitLink = z.infer<typeof TaskGitLinkSchema>;
+
+// Phase 3: Contract version
+export const ContractVersionSchema = z.object({
+  id: z.string(),
+  contractId: z.string(),
+  taskId: z.string(),
+  version: z.number().int(),
+  status: ContractVersionStatusSchema,
+  schema: z.record(z.unknown()).nullable(),
+  metadata: z.record(z.unknown()).nullable(),
+  createdAt: z.coerce.date(),
+  activatedAt: z.coerce.date().nullable(),
+});
+export type ContractVersion = z.infer<typeof ContractVersionSchema>;
+
+// Phase 3: Project decision
+export const ProjectDecisionSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  taskId: z.string().nullable(),
+  title: z.string(),
+  decision: z.string(),
+  reason: z.string().nullable(),
+  createdById: z.string(),
+  agentSessionId: z.string().nullable(),
+  status: ProjectDecisionStatusSchema,
+  createdAt: z.coerce.date(),
+  supersededById: z.string().nullable(),
+});
+export type ProjectDecision = z.infer<typeof ProjectDecisionSchema>;
 
 export const TaskContractSchema = z.object({
   id: z.string(),
@@ -256,6 +416,105 @@ export const ReportProgressBodySchema = z.object({
 });
 export type ReportProgressBody = z.infer<typeof ReportProgressBodySchema>;
 
+// Phase 3: Submit completion report
+export const SubmitCompletionReportBodySchema = z.object({
+  userId: z.string().min(1),
+  agentSessionId: z.string().optional(),
+  summary: z.string().min(1).max(5000),
+  filesChanged: z.array(z.string()).default([]),
+  contractsChanged: z.array(z.string()).default([]),
+  testsRun: z.number().int().min(0).default(0),
+  testsPassed: z.number().int().min(0).default(0),
+  testsFailed: z.number().int().min(0).default(0),
+  knownIssues: z.string().max(2000).optional(),
+  scopeChanges: z.string().max(2000).optional(),
+  workRevision: z.string().min(1),
+});
+export type SubmitCompletionReportBody = z.infer<typeof SubmitCompletionReportBodySchema>;
+
+// Phase 3: Request review
+export const RequestReviewBodySchema = z.object({
+  userId: z.string().min(1),
+  agentSessionId: z.string().optional(),
+});
+export type RequestReviewBody = z.infer<typeof RequestReviewBodySchema>;
+
+// Phase 3: Approve review
+export const ApproveReviewBodySchema = z.object({
+  reviewerId: z.string().min(1),
+  comment: z.string().max(2000).optional(),
+});
+export type ApproveReviewBody = z.infer<typeof ApproveReviewBodySchema>;
+
+// Phase 3: Request changes
+export const RequestChangesBodySchema = z.object({
+  reviewerId: z.string().min(1),
+  comment: z.string().min(1).max(2000),
+});
+export type RequestChangesBody = z.infer<typeof RequestChangesBodySchema>;
+
+// Phase 3: Add review finding
+export const AddReviewFindingBodySchema = z.object({
+  source: ReviewFindingSourceSchema,
+  category: ReviewFindingCategorySchema.optional().default('GENERAL'),
+  severity: ReviewFindingSeveritySchema.optional().default('MEDIUM'),
+  title: z.string().min(1).max(200),
+  description: z.string().min(1).max(5000),
+  filePath: z.string().optional(),
+  contractName: z.string().optional(),
+  isBlocking: z.boolean().optional().default(false),
+  createdById: z.string().optional(),
+});
+export type AddReviewFindingBody = z.infer<typeof AddReviewFindingBodySchema>;
+
+// Phase 3: Resolve finding
+export const ResolveFindingBodySchema = z.object({
+  status: z.enum(['RESOLVED', 'DISMISSED']),
+  resolvedById: z.string().optional(),
+});
+export type ResolveFindingBody = z.infer<typeof ResolveFindingBodySchema>;
+
+// Phase 3: Register git link
+export const RegisterGitLinkBodySchema = z.object({
+  repositoryUrl: z.string().url().optional(),
+  branchName: z.string().optional(),
+  baseBranch: z.string().optional(),
+  latestCommitSha: z.string().optional(),
+  pullRequestUrl: z.string().url().optional(),
+  pullRequestNumber: z.number().int().optional(),
+});
+export type RegisterGitLinkBody = z.infer<typeof RegisterGitLinkBodySchema>;
+
+// Phase 3: Confirm merge
+export const ConfirmMergeBodySchema = z.object({
+  mergedCommitSha: z.string().optional(),
+  mergedById: z.string().optional(),
+});
+export type ConfirmMergeBody = z.infer<typeof ConfirmMergeBodySchema>;
+
+// Phase 3: Complete task
+export const CompleteTaskBodySchema = z.object({
+  userId: z.string().min(1),
+});
+export type CompleteTaskBody = z.infer<typeof CompleteTaskBodySchema>;
+
+// Phase 3: Record project decision
+export const RecordProjectDecisionBodySchema = z.object({
+  title: z.string().min(1).max(200),
+  decision: z.string().min(1).max(5000),
+  reason: z.string().max(2000).optional(),
+  createdById: z.string().min(1),
+  taskId: z.string().optional(),
+  agentSessionId: z.string().optional(),
+});
+export type RecordProjectDecisionBody = z.infer<typeof RecordProjectDecisionBodySchema>;
+
+// Phase 3: AI review request
+export const RunAiReviewBodySchema = z.object({
+  requestedById: z.string().optional(),
+});
+export type RunAiReviewBody = z.infer<typeof RunAiReviewBodySchema>;
+
 // ─── Extended / Rich Schemas (with relations) ──────────────────────────────────
 
 export const TaskWithRelationsSchema = TaskSchema.extend({
@@ -278,6 +537,15 @@ export const ProjectWithMembersSchema = ProjectSchema.extend({
   _count: z.object({ tasks: z.number() }),
 });
 export type ProjectWithMembers = z.infer<typeof ProjectWithMembersSchema>;
+
+// Phase 3: Review with findings and snapshot
+export const ReviewWithDetailsSchema = ReviewSchema.extend({
+  requestedBy: UserSchema,
+  approvedBy: UserSchema.nullable(),
+  findings: z.array(ReviewFindingSchema),
+  snapshot: ReviewSnapshotSchema.nullable(),
+});
+export type ReviewWithDetails = z.infer<typeof ReviewWithDetailsSchema>;
 
 // ─── Coordination types ────────────────────────────────────────────────────────
 
@@ -323,6 +591,34 @@ export interface CoordinationPreflight {
   coordinationStatus: 'READY' | 'READY_WITH_WARNINGS' | 'BLOCKED';
 }
 
+// Phase 3: Review preflight result
+export interface ReviewPreflight {
+  status: 'READY' | 'READY_WITH_WARNINGS' | 'BLOCKED';
+  warnings: string[];
+  blockers: string[];
+  completionReport: TaskCompletionReport | null;
+  scopeDeviations: ScopeDeviation[];
+  activeReservations: number;
+  unresolvedRisks: ContractRisk[];
+  currentRevision: string | null;
+}
+
+export interface ScopeDeviation {
+  file: string;
+  reason: 'UNDECLARED_FILE' | 'DECLARED_BUT_NOT_IN_REPORT';
+  severity: 'LOW' | 'MEDIUM' | 'HIGH';
+}
+
+// Phase 3: Merge readiness result
+export interface MergeReadiness {
+  status: 'READY_TO_MERGE' | 'READY_WITH_WARNINGS' | 'NOT_READY';
+  warnings: string[];
+  blockers: string[];
+  approvedRevision: string | null;
+  currentRevision: string | null;
+  revisionsMatch: boolean;
+}
+
 // ─── API Response Wrappers ────────────────────────────────────────────────────
 
 export const ApiSuccessSchema = <T extends z.ZodTypeAny>(dataSchema: T) =>
@@ -352,6 +648,7 @@ export type DomainEventType =
   | 'task.progress'
   | 'task.review_requested'
   | 'task.completed'
+  | 'task.unblocked'
   | 'file.reserved'
   | 'file.released'
   | 'file.conflict'
@@ -363,6 +660,20 @@ export type DomainEventType =
   | 'agent.updated'
   | 'contract.declared'
   | 'contract.risk_detected'
+  | 'contract.activated'
+  | 'contract.superseded'
+  | 'completion_report.created'
+  | 'review.requested'
+  | 'review.started'
+  | 'review.finding_created'
+  | 'review.finding_resolved'
+  | 'review.changes_requested'
+  | 'review.approved'
+  | 'review.invalidated'
+  | 'merge.readiness_changed'
+  | 'merge.confirmed'
+  | 'decision.recorded'
+  | 'decision.superseded'
   | 'member.joined';
 
 export interface DomainEvent<T = unknown> {

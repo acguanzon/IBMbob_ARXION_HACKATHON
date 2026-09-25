@@ -819,12 +819,476 @@ Always call this when you finish working on a task.`,
   },
 );
 
+// ── Phase 3 Tools ─────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'submit_completion_report',
+  {
+    description: `Submit a completion report for a task before requesting review.
+The report is required evidence: files changed, contracts changed, test results, revision, and known issues.
+Must be called while the task is IN_PROGRESS with an active agent session.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+      user_id: z.string().describe('Your user ID'),
+      agent_session_id: z.string().optional().describe('Agent session ID from begin_task'),
+      summary: z.string().min(1).describe('Summary of what was implemented'),
+      files_changed: z.array(z.string()).optional().default([]).describe('List of files modified'),
+      contracts_changed: z.array(z.string()).optional().default([]).describe('Contracts added or changed (e.g. "POST /api/login", "LoginResponse v2")'),
+      tests_run: z.number().int().min(0).optional().default(0).describe('Total number of tests run'),
+      tests_passed: z.number().int().min(0).optional().default(0).describe('Number of tests passed'),
+      tests_failed: z.number().int().min(0).optional().default(0).describe('Number of tests failed'),
+      known_issues: z.string().optional().describe('Any known issues or limitations'),
+      scope_changes: z.string().optional().describe('Any scope changes from original intent'),
+      work_revision: z.string().describe('Git commit SHA or revision identifier for this work'),
+    }),
+  },
+  async ({ task_id, user_id, agent_session_id, summary, files_changed, contracts_changed, tests_run, tests_passed, tests_failed, known_issues, scope_changes, work_revision }) => {
+    try {
+      const report = await apiPost<{ id: string; taskId: string; workRevision: string }>(
+        `/tasks/${encodeURIComponent(task_id)}/completion-report`,
+        {
+          userId: user_id,
+          agentSessionId: agent_session_id,
+          summary,
+          filesChanged: files_changed,
+          contractsChanged: contracts_changed,
+          testsRun: tests_run,
+          testsPassed: tests_passed,
+          testsFailed: tests_failed,
+          knownIssues: known_issues,
+          scopeChanges: scope_changes,
+          workRevision: work_revision,
+        },
+      );
+
+      const lines = [
+        `✅ Completion report submitted for task ${task_id}`,
+        `Report ID: ${report.id}`,
+        `Revision:  ${report.workRevision}`,
+        `Tests:     ${tests_passed}/${tests_run} passed`,
+        tests_failed > 0 ? `⚠️  ${tests_failed} test(s) failed` : '',
+        known_issues ? `⚠️  Known issues: ${known_issues}` : '',
+        '',
+        'You can now call request_review to initiate a review.',
+      ].filter(Boolean);
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to submit completion report: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'request_review',
+  {
+    description: `Request a human review for a completed task.
+Runs a full review preflight check before creating the review.
+Will be BLOCKED if: task is not IN_PROGRESS, no completion report, or unfinished dependencies.
+Will return READY_WITH_WARNINGS for scope deviations, test failures, or contract risks.
+Only BLOCKED prevents review creation.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+      user_id: z.string().describe('Your user ID'),
+      agent_session_id: z.string().optional().describe('Agent session ID from begin_task'),
+    }),
+  },
+  async ({ task_id, user_id, agent_session_id }) => {
+    try {
+      const result = await apiPost<{
+        review: { id: string; reviewVersion: number; reviewRevision: string | null; status: string };
+        preflight: { status: string; warnings: string[]; blockers: string[]; scopeDeviations: Array<{ file: string; reason: string; severity: string }> };
+      }>(
+        `/tasks/${encodeURIComponent(task_id)}/request-review`,
+        { userId: user_id, agentSessionId: agent_session_id },
+      );
+
+      const { review, preflight } = result;
+      const lines = [
+        `✅ Review v${review.reviewVersion} created for task ${task_id}`,
+        `Review ID:  ${review.id}`,
+        `Status:     ${review.status}`,
+        `Revision:   ${review.reviewRevision ?? 'N/A'}`,
+        preflight.warnings.length > 0 ? `\n⚠️  Warnings:` : '',
+        ...preflight.warnings.map((w) => `   • ${w}`),
+        preflight.scopeDeviations.length > 0 ? `\n📋 Scope deviations:` : '',
+        ...preflight.scopeDeviations.map((d) => `   • ${d.file} — ${d.reason} (${d.severity})`),
+        '',
+        'The reviewer will receive an AI-assisted review summary. Await human approval.',
+      ].filter(Boolean);
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to request review: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_review',
+  {
+    description: `Get the current review status and findings for a task.
+Returns the latest review with its status, findings, snapshot, and approval state.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+    }),
+  },
+  async ({ task_id }) => {
+    try {
+      const reviews = await apiGet<Array<{
+        id: string;
+        status: string;
+        reviewVersion: number;
+        reviewRevision: string | null;
+        approvedAt: string | null;
+        approvedById: string | null;
+        findings: Array<{ id: string; title: string; severity: string; source: string; status: string; isBlocking: boolean }>;
+      }>>(`/tasks/${encodeURIComponent(task_id)}/reviews`);
+
+      if (reviews.length === 0) {
+        return { content: [{ type: 'text', text: `No reviews found for task ${task_id}.` }] };
+      }
+
+      const latest = reviews[0]!;
+      const blockingOpen = latest.findings.filter((f) => f.isBlocking && f.status === 'OPEN');
+      const lines = [
+        `Review v${latest.reviewVersion} — ${latest.status}`,
+        `Review ID:  ${latest.id}`,
+        `Revision:   ${latest.reviewRevision ?? 'N/A'}`,
+        latest.approvedAt ? `Approved:   ${latest.approvedAt}` : '',
+        ``,
+        `Findings (${latest.findings.length} total, ${blockingOpen.length} blocking open):`,
+        ...latest.findings.map((f) => `  [${f.source}] ${f.severity} — ${f.title} (${f.status})${f.isBlocking ? ' 🔴 BLOCKING' : ''}`),
+      ].filter((l) => l !== undefined);
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get review: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'run_ai_review',
+  {
+    description: `Trigger an AI-assisted review for a review in progress.
+The AI review analyses the completion report, test results, scope deviations, contract risks, and dependency completeness.
+AI review NEVER approves the review — it only creates findings to assist the human reviewer.`,
+    inputSchema: z.object({
+      review_id: z.string().describe('Review ID from request_review or get_review'),
+    }),
+  },
+  async ({ review_id }) => {
+    try {
+      const result = await apiPost<{ findings: unknown[]; findingsCreated: number }>(
+        `/reviews/${encodeURIComponent(review_id)}/ai-review`,
+        {},
+      );
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ AI review completed for review ${review_id}.\n${result.findingsCreated} finding(s) created.\nThe human reviewer will see these findings on the review page.`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to run AI review: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_review_feedback',
+  {
+    description: `Get all findings (feedback) for a review — from AI, humans, or the system.
+Use this to see what needs to be addressed before the review can be approved.`,
+    inputSchema: z.object({
+      review_id: z.string().describe('Review ID'),
+    }),
+  },
+  async ({ review_id }) => {
+    try {
+      const findings = await apiGet<Array<{
+        id: string;
+        source: string;
+        severity: string;
+        category: string;
+        title: string;
+        description: string;
+        status: string;
+        isBlocking: boolean;
+        filePath: string | null;
+        contractName: string | null;
+      }>>(`/reviews/${encodeURIComponent(review_id)}/findings`);
+
+      if (findings.length === 0) {
+        return { content: [{ type: 'text', text: `No findings for review ${review_id}.` }] };
+      }
+
+      const blocking = findings.filter((f) => f.isBlocking && f.status === 'OPEN');
+      const lines = [
+        `Findings for review ${review_id} (${findings.length} total, ${blocking.length} blocking open):`,
+        '',
+        ...findings.map((f) =>
+          `[${f.id.slice(-6)}] [${f.source}] ${f.severity}/${f.category} — ${f.title}\n  Status: ${f.status}${f.isBlocking ? ' 🔴 BLOCKING' : ''}${f.filePath ? `\n  File: ${f.filePath}` : ''}`,
+        ),
+      ];
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get review feedback: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'resolve_review_feedback',
+  {
+    description: `Mark a review finding as RESOLVED or DISMISSED.
+Use RESOLVED when you have addressed the issue.
+Use DISMISSED when the finding is not applicable.
+Never deletes findings — preserves audit history.`,
+    inputSchema: z.object({
+      finding_id: z.string().describe('Finding ID from get_review_feedback'),
+      status: z.enum(['RESOLVED', 'DISMISSED']).describe('New status for the finding'),
+      resolved_by_id: z.string().optional().describe('Your user ID'),
+    }),
+  },
+  async ({ finding_id, status, resolved_by_id }) => {
+    try {
+      await apiPatch(`/findings/${encodeURIComponent(finding_id)}/resolve`, {
+        status,
+        resolvedById: resolved_by_id,
+      });
+      return {
+        content: [{ type: 'text', text: `✅ Finding ${finding_id} marked as ${status}.` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to resolve finding: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_merge_readiness',
+  {
+    description: `Check whether a task is ready to merge.
+Returns READY_TO_MERGE, READY_WITH_WARNINGS, or NOT_READY.
+Checks: approved review, revision match, no blocking findings, completed dependencies, merge status.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+    }),
+  },
+  async ({ task_id }) => {
+    try {
+      const readiness = await apiGet<{
+        status: string;
+        warnings: string[];
+        blockers: string[];
+        approvedRevision: string | null;
+        currentRevision: string | null;
+        revisionsMatch: boolean;
+      }>(`/tasks/${encodeURIComponent(task_id)}/merge-readiness`);
+
+      const icon = readiness.status === 'READY_TO_MERGE' ? '✅' : readiness.status === 'READY_WITH_WARNINGS' ? '⚠️' : '❌';
+      const lines = [
+        `${icon} Merge Readiness: ${readiness.status}`,
+        `Approved revision: ${readiness.approvedRevision ?? 'N/A'}`,
+        `Current revision:  ${readiness.currentRevision ?? 'N/A'}`,
+        `Revisions match:   ${readiness.revisionsMatch ? 'Yes' : 'No'}`,
+        readiness.blockers.length > 0 ? `\n🚫 Blockers:` : '',
+        ...readiness.blockers.map((b) => `   • ${b}`),
+        readiness.warnings.length > 0 ? `\n⚠️  Warnings:` : '',
+        ...readiness.warnings.map((w) => `   • ${w}`),
+      ].filter(Boolean);
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get merge readiness: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'complete_task',
+  {
+    description: `Mark a task as DONE after it has been approved and merged.
+This is idempotent — calling twice has no duplicate side effects.
+
+Completion requires:
+- An approved review
+- No blocking findings remaining
+- Merge confirmed (or no git link)
+
+On success:
+- Task → DONE
+- All file reservations released
+- All agent sessions ended
+- Draft contract versions → ACTIVE
+- Dependent tasks re-evaluated (blocked → ready if all deps DONE)
+- Activity recorded and events emitted`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+      user_id: z.string().describe('Your user ID'),
+    }),
+  },
+  async ({ task_id, user_id }) => {
+    try {
+      const result = await apiPost<{
+        task: { id: string; displayId: string; status: string; completedAt: string | null };
+        alreadyDone: boolean;
+      }>(
+        `/tasks/${encodeURIComponent(task_id)}/complete`,
+        { userId: user_id },
+      );
+
+      if (result.alreadyDone) {
+        return {
+          content: [{ type: 'text', text: `ℹ️  Task ${task_id} was already DONE. No changes made.` }],
+        };
+      }
+
+      return {
+        content: [{
+          type: 'text',
+          text: [
+            `✅ Task ${result.task.displayId} marked as DONE.`,
+            `Completed at: ${result.task.completedAt ?? 'now'}`,
+            '',
+            'The following happened automatically:',
+            '• File reservations released',
+            '• Agent sessions ended',
+            '• Draft contracts activated',
+            '• Dependent tasks re-evaluated',
+          ].join('\n'),
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to complete task: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_project_decisions',
+  {
+    description: `Retrieve all project decisions recorded for a project.
+Use this during begin_task to understand prior architectural and design decisions that should guide your work.`,
+    inputSchema: z.object({
+      project_id: z.string().describe('The project ID'),
+    }),
+  },
+  async ({ project_id }) => {
+    try {
+      const decisions = await apiGet<Array<{
+        id: string;
+        title: string;
+        decision: string;
+        reason: string | null;
+        status: string;
+        createdAt: string;
+        createdBy: { name: string };
+        task: { displayId: string; title: string } | null;
+      }>>(`/projects/${encodeURIComponent(project_id)}/decisions`);
+
+      if (decisions.length === 0) {
+        return { content: [{ type: 'text', text: `No project decisions recorded for project ${project_id}.` }] };
+      }
+
+      const lines = [
+        `Project Decisions (${decisions.length}):`,
+        '',
+        ...decisions.map((d) => [
+          `[${d.id.slice(-6)}] ${d.title} — ${d.status}`,
+          `  Decision: ${d.decision}`,
+          d.reason ? `  Reason: ${d.reason}` : '',
+          d.task ? `  Task: ${d.task.displayId} — ${d.task.title}` : '',
+          `  By: ${d.createdBy.name} on ${new Date(d.createdAt).toLocaleDateString()}`,
+        ].filter(Boolean).join('\n')),
+      ];
+
+      return { content: [{ type: 'text', text: lines.join('\n') }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get project decisions: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'record_project_decision',
+  {
+    description: `Record an architectural or design decision for the project.
+Decisions are stored in the project decision log and provided to future agents during begin_task preflight.
+Use this to capture important choices that will inform the rest of the project.`,
+    inputSchema: z.object({
+      project_id: z.string().describe('The project ID'),
+      title: z.string().describe('Short title for the decision (e.g. "Use JWT for auth")'),
+      decision: z.string().describe('Full decision text'),
+      reason: z.string().optional().describe('Why this decision was made'),
+      created_by_id: z.string().describe('Your user ID'),
+      task_id: z.string().optional().describe('Related task ID if applicable'),
+      agent_session_id: z.string().optional().describe('Agent session ID from begin_task'),
+    }),
+  },
+  async ({ project_id, title, decision, reason, created_by_id, task_id, agent_session_id }) => {
+    try {
+      const dec = await apiPost<{ id: string; title: string; status: string }>(
+        `/projects/${encodeURIComponent(project_id)}/decisions`,
+        {
+          title,
+          decision,
+          reason,
+          createdById: created_by_id,
+          taskId: task_id,
+          agentSessionId: agent_session_id,
+        },
+      );
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ Project decision recorded.\nID: ${dec.id}\nTitle: ${dec.title}\nStatus: ${dec.status}`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to record decision: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Arxion MCP Server v0.3.0 running on stdio');
+  console.error('Arxion MCP Server v0.4.0 running on stdio');
   console.error(`Backend API: ${API_BASE_URL}`);
 }
 

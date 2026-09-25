@@ -53,6 +53,33 @@ export const api = {
     getRisks: (projectId: string) =>
       apiFetch<CoordinationRisk[]>(`/projects/${projectId}/coordination/risks`),
   },
+  // Phase 3
+  reviews: {
+    listByTask: (taskId: string) =>
+      apiFetch<ReviewWithDetails[]>(`/tasks/${taskId}/reviews`),
+    get: (reviewId: string) =>
+      apiFetch<ReviewWithDetails>(`/reviews/${reviewId}`),
+    getFindings: (reviewId: string) =>
+      apiFetch<ReviewFindingItem[]>(`/reviews/${reviewId}/findings`),
+    approve: (reviewId: string, reviewerId: string, comment?: string) =>
+      apiFetch<ReviewWithDetails>(`/reviews/${reviewId}/approve`, {
+        method: 'POST',
+        body: JSON.stringify({ reviewerId, comment }),
+      }),
+    requestChanges: (reviewId: string, reviewerId: string, comment: string) =>
+      apiFetch<{ recorded: boolean }>(`/reviews/${reviewId}/request-changes`, {
+        method: 'POST',
+        body: JSON.stringify({ reviewerId, comment }),
+      }),
+  },
+  decisions: {
+    listByProject: (projectId: string) =>
+      apiFetch<ProjectDecisionItem[]>(`/projects/${projectId}/decisions`),
+  },
+  mergeReadiness: {
+    get: (taskId: string) =>
+      apiFetch<MergeReadinessResult>(`/tasks/${taskId}/merge-readiness`),
+  },
 };
 
 // ── API response types ────────────────────────────────────────────────────────
@@ -99,4 +126,68 @@ export interface CoordinationRisk {
   affectedTaskId: string;
   affectedTaskDisplayId: string;
   affectedRelationship: string;
+}
+
+// Phase 3 types
+export interface ReviewFindingItem {
+  id: string;
+  source: string;
+  category: string;
+  severity: string;
+  title: string;
+  description: string;
+  status: string;
+  isBlocking: boolean;
+  filePath: string | null;
+  contractName: string | null;
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface ReviewWithDetails {
+  id: string;
+  taskId: string;
+  requestedById: string;
+  status: string;
+  reviewVersion: number;
+  reviewRevision: string | null;
+  comment: string | null;
+  createdAt: string;
+  updatedAt: string;
+  approvedAt: string | null;
+  approvedById: string | null;
+  invalidatedAt: string | null;
+  invalidationReason: string | null;
+  requestedBy: { id: string; name: string; email: string };
+  approvedBy: { id: string; name: string; email: string } | null;
+  findings: ReviewFindingItem[];
+  snapshot: {
+    workRevision: string;
+    gitCommitSha: string | null;
+    branchName: string | null;
+    fileSnapshot: Record<string, unknown> | null;
+    testSnapshot: Record<string, unknown> | null;
+  } | null;
+}
+
+export interface ProjectDecisionItem {
+  id: string;
+  projectId: string;
+  taskId: string | null;
+  title: string;
+  decision: string;
+  reason: string | null;
+  status: string;
+  createdAt: string;
+  createdBy: { id: string; name: string };
+  task: { id: string; displayId: string; title: string } | null;
+}
+
+export interface MergeReadinessResult {
+  status: 'READY_TO_MERGE' | 'READY_WITH_WARNINGS' | 'NOT_READY';
+  warnings: string[];
+  blockers: string[];
+  approvedRevision: string | null;
+  currentRevision: string | null;
+  revisionsMatch: boolean;
 }
