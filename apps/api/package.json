@@ -1,0 +1,27 @@
+{
+  "name": "@arxion/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts"
+  },
+  "dependencies": {
+    "@arxion/database": "workspace:*",
+    "@arxion/types": "workspace:*",
+    "@arxion/config": "workspace:*",
+    "@fastify/cors": "^9.0.1",
+    "fastify": "^4.28.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.5.4"
+  }
+}

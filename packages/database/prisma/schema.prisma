@@ -1,0 +1,291 @@
+// Prisma schema for Arxion — Agent-agnostic collaboration platform
+// Phase 2: Multi-Agent Coordination
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum TaskStatus {
+  BACKLOG
+  TODO
+  IN_PROGRESS
+  BLOCKED
+  REVIEW
+  DONE
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ProjectMemberRole {
+  OWNER
+  MEMBER
+  VIEWER
+}
+
+enum FileReservationStatus {
+  ACTIVE
+  RELEASED
+  CONFLICT
+  EXPIRED
+}
+
+enum AgentType {
+  IBM_BOB
+  CURSOR
+  CLAUDE_CODE
+  OTHER
+}
+
+enum AgentSessionStatus {
+  IDLE
+  WORKING
+  WAITING
+  FINISHED
+  STALE
+}
+
+enum ReviewStatus {
+  PENDING
+  APPROVED
+  CHANGES_REQUESTED
+}
+
+enum ContractType {
+  API
+  MODEL
+  SCHEMA
+  TYPE
+  EVENT
+  OTHER
+}
+
+enum ContractRelationship {
+  PROVIDES
+  MODIFIES
+  CONSUMES
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  projectMemberships ProjectMember[]
+  createdProjects    Project[]             @relation("CreatedByUser")
+  assignedTasks      Task[]                @relation("AssignedTasks")
+  createdTasks       Task[]                @relation("CreatedTasks")
+  fileReservations   TaskFileReservation[]
+  agentSessions      AgentSession[]
+  taskActivities     TaskActivity[]
+  reviews            Review[]
+
+  @@map("users")
+}
+
+model Project {
+  id            String   @id @default(cuid())
+  name          String
+  description   String?
+  repositoryUrl String?
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  createdBy        User                  @relation("CreatedByUser", fields: [createdById], references: [id])
+  members          ProjectMember[]
+  tasks            Task[]
+  fileReservations TaskFileReservation[]
+  agentSessions    AgentSession[]
+  taskActivities   TaskActivity[]
+  taskContracts    TaskContract[]
+
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String            @id @default(cuid())
+  projectId String
+  userId    String
+  role      ProjectMemberRole @default(MEMBER)
+  joinedAt  DateTime          @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@map("project_members")
+}
+
+model Task {
+  id          String       @id @default(cuid())
+  projectId   String
+  displayId   String
+  title       String
+  description String?
+  status      TaskStatus   @default(BACKLOG)
+  priority    TaskPriority @default(MEDIUM)
+  assigneeId  String?
+  createdById String
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  startedAt   DateTime?
+  completedAt DateTime?
+
+  project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignee         User?                 @relation("AssignedTasks", fields: [assigneeId], references: [id])
+  createdBy        User                  @relation("CreatedTasks", fields: [createdById], references: [id])
+  dependencies     TaskDependency[]      @relation("TaskDependencies")
+  dependents       TaskDependency[]      @relation("DependentTasks")
+  fileReservations TaskFileReservation[]
+  agentSessions    AgentSession[]
+  taskActivities   TaskActivity[]
+  reviews          Review[]
+  contracts        TaskContract[]
+  workIntents      TaskWorkIntent[]
+
+  @@unique([projectId, displayId])
+  @@map("tasks")
+}
+
+model TaskDependency {
+  id              String   @id @default(cuid())
+  taskId          String
+  dependsOnTaskId String
+  createdAt       DateTime @default(now())
+
+  task      Task @relation("TaskDependencies", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOn Task @relation("DependentTasks", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+  @@map("task_dependencies")
+}
+
+model TaskFileReservation {
+  id              String                @id @default(cuid())
+  projectId       String
+  taskId          String
+  userId          String
+  agentSessionId  String?
+  filePath        String                // normalized path
+  status          FileReservationStatus @default(ACTIVE)
+  reservedAt      DateTime              @default(now())
+  leaseExpiresAt  DateTime?             // null = no expiry; set when agent session starts
+  releasedAt      DateTime?
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task         Task          @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user         User          @relation(fields: [userId], references: [id])
+  agentSession AgentSession? @relation(fields: [agentSessionId], references: [id])
+
+  @@map("task_file_reservations")
+}
+
+model AgentSession {
+  id              String             @id @default(cuid())
+  projectId       String
+  userId          String
+  taskId          String?
+  agentType       AgentType          @default(IBM_BOB)
+  externalAgentId String?
+  status          AgentSessionStatus @default(IDLE)
+  startedAt       DateTime           @default(now())
+  endedAt         DateTime?
+  lastSeenAt      DateTime           @default(now())
+
+  project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user             User                  @relation(fields: [userId], references: [id])
+  task             Task?                 @relation(fields: [taskId], references: [id])
+  fileReservations TaskFileReservation[]
+  taskActivities   TaskActivity[]
+
+  @@map("agent_sessions")
+}
+
+model TaskActivity {
+  id             String   @id @default(cuid())
+  projectId      String
+  taskId         String?
+  userId         String?
+  agentSessionId String?
+  type           String
+  message        String
+  metadata       Json?
+  createdAt      DateTime @default(now())
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task         Task?         @relation(fields: [taskId], references: [id])
+  user         User?         @relation(fields: [userId], references: [id])
+  agentSession AgentSession? @relation(fields: [agentSessionId], references: [id])
+
+  @@map("task_activities")
+}
+
+model Review {
+  id         String       @id @default(cuid())
+  taskId     String
+  reviewerId String
+  status     ReviewStatus @default(PENDING)
+  comment    String?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  task     Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  reviewer User @relation(fields: [reviewerId], references: [id])
+
+  @@map("reviews")
+}
+
+// ─── Phase 2 New Models ────────────────────────────────────────────────────────
+
+/// A contract that a task PROVIDES, MODIFIES, or CONSUMES.
+/// Used for cross-task integration risk detection.
+model TaskContract {
+  id           String               @id @default(cuid())
+  projectId    String
+  taskId       String
+  type         ContractType
+  name         String               // e.g. "POST /api/login", "LoginResponse", "User"
+  relationship ContractRelationship
+  metadata     Json?
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task    Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("task_contracts")
+}
+
+/// Work intent declared by an agent before modifying code.
+/// Enables pre-code conflict detection.
+model TaskWorkIntent {
+  id          String   @id @default(cuid())
+  taskId      String
+  files       String[] // normalized file paths
+  apis        String[]
+  models      String[]
+  contracts   String[]
+  summary     String?
+  declaredAt  DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("task_work_intents")
+}
