@@ -2,6 +2,7 @@ import { api } from '@/lib/api';
 import { Sidebar } from '@/components/Sidebar';
 import { TaskBoard } from '@/components/TaskBoard';
 import { ActivityPanel } from '@/components/ActivityPanel';
+import { RealtimeProvider } from '@/components/RealtimeProvider';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,17 +18,44 @@ export default async function DashboardPage() {
 
   const firstProject = projects[0] ?? null;
 
+  // Fetch tasks + Phase 2 metadata in parallel
   let tasks: Awaited<ReturnType<typeof api.tasks.listByProject>> = [];
+  let taskMeta: Record<string, { activeFiles: number; contractRisks: number }> = {};
+
   if (firstProject) {
-    try {
-      tasks = await api.tasks.listByProject(firstProject.id);
-    } catch {
-      // tasks stay empty
+    const [tasksResult, reservationsResult, risksResult] = await Promise.allSettled([
+      api.tasks.listByProject(firstProject.id),
+      api.fileReservations.listActiveByProject(firstProject.id),
+      api.coordination.getRisks(firstProject.id),
+    ]);
+
+    if (tasksResult.status === 'fulfilled') tasks = tasksResult.value;
+
+    // Build per-task file count from active reservations
+    if (reservationsResult.status === 'fulfilled') {
+      for (const r of reservationsResult.value) {
+        const tid = r.task.id;
+        const entry = (taskMeta[tid] ??= { activeFiles: 0, contractRisks: 0 });
+        entry.activeFiles += 1;
+      }
+    }
+
+    // Build per-task contract risk count
+    if (risksResult.status === 'fulfilled') {
+      for (const risk of risksResult.value) {
+        for (const tid of [risk.sourceTaskId, risk.affectedTaskId]) {
+          const entry = (taskMeta[tid] ??= { activeFiles: 0, contractRisks: 0 });
+          entry.contractRisks += 1;
+        }
+      }
     }
   }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
+      {/* Realtime WebSocket — invisible, triggers router.refresh() on events */}
+      {firstProject && <RealtimeProvider projectId={firstProject.id} />}
+
       {/* Left sidebar */}
       <Sidebar projects={projects} activeProjectId={firstProject?.id ?? null} />
 
@@ -63,7 +91,7 @@ export default async function DashboardPage() {
         {/* Task Board */}
         <div className="flex-1 overflow-auto p-6">
           {firstProject ? (
-            <TaskBoard tasks={tasks} projectId={firstProject.id} />
+            <TaskBoard tasks={tasks} projectId={firstProject.id} taskMeta={taskMeta} />
           ) : (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">

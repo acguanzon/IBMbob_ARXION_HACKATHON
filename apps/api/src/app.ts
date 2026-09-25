@@ -11,14 +11,17 @@ import { coordinationRoutes } from './modules/coordination/coordination.routes.j
 import { errorHandler } from './lib/error-handler.js';
 import { startStalenessWatcher } from './lib/staleness-watcher.js';
 import { realtimeEmitter } from './lib/realtime.js';
+import { attachWebSocket } from './lib/websocket.js';
 
 export async function buildApp() {
   const app = Fastify({
     logger: { level: getEnv('LOG_LEVEL', 'info') },
   });
 
+  const corsOrigin = getEnv('CORS_ORIGIN', 'http://localhost:3000');
+
   await app.register(cors, {
-    origin: getEnv('CORS_ORIGIN', 'http://localhost:3000'),
+    origin: corsOrigin,
     methods: ['GET', 'POST', 'PATCH', 'DELETE'],
   });
 
@@ -33,8 +36,9 @@ export async function buildApp() {
   await app.register(activityRoutes);
   await app.register(coordinationRoutes);
 
-  // Start background staleness watcher after server is ready
+  // Attach Socket.IO and start background jobs after server is ready
   app.addHook('onReady', () => {
+    attachWebSocket(app, corsOrigin);
     startStalenessWatcher(realtimeEmitter);
   });
 

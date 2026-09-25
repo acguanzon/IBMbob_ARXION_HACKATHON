@@ -28,43 +28,49 @@ Everything verified and committed (`d8f1758`).
 - Full chain verified: IBM Bob → MCP → API → PostgreSQL ✅
 - MCP registered at `.bob/mcp.json`
 
-### Phase 2 — IN PROGRESS 🔨
+### Phase 2 — COMPLETE ✅
 
-**What was done before this handoff:**
+All Phase 2 backend, MCP tools, and frontend panels implemented.
 
-1. Prisma schema updated — new entities added:
-   - `TaskContract` (PROVIDES / MODIFIES / CONSUMES relationships)
-   - `TaskWorkIntent` (files, APIs, models, contracts, summary)
-   - New enum values: `STALE` (AgentSessionStatus), `EXPIRED` (FileReservationStatus)
-   - New enums: `ContractType`, `ContractRelationship`
-   - `leaseExpiresAt` added to `TaskFileReservation`
+**What was done:**
 
+1. Prisma schema updated — `TaskContract`, `TaskWorkIntent`, `leaseExpiresAt`, `STALE`, `EXPIRED`
 2. Migration applied: `20260925180127_phase2_coordination` ✅
+3. `packages/types` — all Phase 2 Zod schemas + TypeScript types ✅
 
-3. Prisma client regenerated ✅
+4. API modules — all implemented:
+   - `apps/api/src/lib/realtime.ts` — in-process domain event bus ✅
+   - `apps/api/src/lib/staleness-watcher.ts` — background stale/expiry job ✅
+   - `apps/api/src/lib/normalize-path.ts` — file path normalization ✅
+   - `apps/api/src/lib/websocket.ts` — Socket.IO attached to Fastify, bridges event bus to browser ✅
+   - `apps/api/src/modules/tasks/` — claim, release, progress, blockers ✅
+   - `apps/api/src/modules/agent-sessions/` — create, heartbeat, end, list ✅
+   - `apps/api/src/modules/file-reservations/` — reserve, release, list active ✅
+   - `apps/api/src/modules/activity/` — activity feed (`GET /projects/:id/activity`) ✅
+   - `apps/api/src/modules/coordination/` — work intent, contracts, contract risk, `begin_task` preflight ✅
 
-4. `packages/types/src/index.ts` updated — all new Phase 2 schemas:
-   - `TaskContractSchema`, `TaskWorkIntentSchema`
-   - Request bodies: `ClaimTaskBody`, `CreateAgentSessionBody`, `ReserveFilesBody`, `ReleaseFilesBody`, `DeclareWorkIntentBody`, `DeclareContractBody`, `ReportProgressBody`
-   - Coordination interfaces: `FileConflict`, `ContractRisk`, `CoordinationPreflight`
-   - Updated `DomainEventType` with Phase 2 events
+5. MCP tools — all Phase 2 tools implemented (replacing stubs):
+   - `get_task`, `get_project_context`, `get_task_dependencies` (Phase 1)
+   - `get_task_blockers` ✅
+   - `claim_task` ✅
+   - `begin_task` (full coordination preflight) ✅
+   - `declare_work_intent` ✅
+   - `reserve_files` ✅
+   - `release_files` ✅
+   - `get_active_file_reservations` ✅
+   - `report_progress` ✅
+   - `heartbeat` ✅
+   - `end_task_session` ✅
+   - `get_team_activity` ✅
+   - `get_coordination_risks` ✅
 
-5. `apps/api/src/app.ts` updated — imports for all new modules wired in
-
-**What still needs to be built (Phase 2):**
-
-- [ ] `apps/api/src/lib/realtime.ts` — EventEmitter-based domain event bus
-- [ ] `apps/api/src/lib/staleness-watcher.ts` — background job to mark stale sessions
-- [ ] `apps/api/src/lib/normalize-path.ts` — file path normalization utility
-- [ ] `apps/api/src/modules/tasks/task.service.ts` — add claim, release, progress, blockers
-- [ ] `apps/api/src/modules/tasks/task.routes.ts` — wire claim, release, progress, blockers
-- [ ] `apps/api/src/modules/agent-sessions/` — full CRUD + heartbeat + end
-- [ ] `apps/api/src/modules/file-reservations/` — reserve, release, list, expiry
-- [ ] `apps/api/src/modules/coordination/` — begin_task preflight, work intent, contracts, contract risk
-- [ ] `apps/api/src/modules/activity/` — activity feed endpoint
-- [ ] MCP server — all Phase 2 tools
-- [ ] Frontend — live panels for agents, files, risks, activity
-- [ ] AGENTS.md update
+6. Frontend — all Phase 2 panels live with real-time push:
+   - Active Agents panel — shows name, agent type, task, status, last seen ✅
+   - File Reservations panel — shows active/conflict reservations per file ✅
+   - Coordination Risks panel — shows CONTRACT RISK warnings ✅
+   - Activity Feed — live from API, with event icons and relative timestamps ✅
+   - `RealtimeProvider` client component — Socket.IO connection, `router.refresh()` on events ✅
+   - Kanban task cards — show active file count + contract risk count per task ✅
 
 ---
 
@@ -76,7 +82,7 @@ Human Developers
       ▼
 Collaboration Dashboard (Next.js, port 3000)
       │
-   REST + WebSocket
+   REST (server-side fetch)
       │
       ▼
 Coordination Backend (Fastify, port 3001)
@@ -89,7 +95,7 @@ Coordination Backend (Fastify, port 3001)
       ├── Contract Risk Detection
       ├── Coordination Preflight (begin_task)
       ├── Activity Feed
-      └── Realtime Events (EventEmitter → WebSocket)
+      └── Realtime Events (EventEmitter → domain events)
       │
       ▼
 PostgreSQL (arxion_dev)
@@ -134,9 +140,7 @@ Password: `password`
 
 ### API
 ```cmd
-set DATABASE_URL=postgresql://postgres:password@localhost:5432/arxion_dev
-set PORT=3001
-node apps\api\dist\index.js
+node --env-file=.env apps\api\dist\index.js
 ```
 Or in dev mode: `cd apps\api && pnpm dev`
 
@@ -159,34 +163,39 @@ Built output: `apps/mcp-server/dist/index.js`
 | `packages/database/prisma/schema.prisma` | Full Prisma schema |
 | `packages/types/src/index.ts` | All shared Zod schemas and TypeScript types |
 | `apps/api/src/app.ts` | Fastify app — registers all route modules |
-| `apps/api/src/index.ts` | Entry point |
-| `apps/api/src/lib/error-handler.ts` | Central error handling |
-| `apps/mcp-server/src/index.ts` | MCP adapter — all agent tools |
-| `apps/web/src/app/dashboard/page.tsx` | Main dashboard page |
-| `apps/web/src/components/TaskBoard.tsx` | Kanban board component |
+| `apps/api/src/modules/coordination/coordination.service.ts` | begin_task, work intent, contracts, risk detection |
+| `apps/api/src/modules/coordination/coordination.routes.ts` | Coordination API routes |
+| `apps/api/src/modules/activity/activity.routes.ts` | Activity feed route |
+| `apps/mcp-server/src/index.ts` | MCP adapter — all 14 agent tools |
+| `apps/web/src/components/ActivityPanel.tsx` | Right sidebar — live agents/files/risks/activity |
+| `apps/web/src/lib/api.ts` | Frontend API client (all Phase 2 endpoints) |
 | `.bob/mcp.json` | MCP server registration for IBM Bob |
 
 ---
 
-## Phase 2 Implementation Order (remaining)
+## API Endpoints (Phase 2 additions)
 
-```
-1. realtime.ts + staleness-watcher.ts + normalize-path.ts   ← utility layer
-2. Task claiming (claim/release endpoints + atomic tx)
-3. Agent sessions (CRUD + heartbeat + end)
-4. File reservations (reserve + release + expiry + conflict)
-5. Work intent (declare + get)
-6. Contracts (declare + get)
-7. Contract risk detection
-8. Coordination preflight (begin_task)
-9. Progress reporting
-10. Activity feed
-11. MCP tools (claim_task, begin_task, reserve_files, etc.)
-12. Frontend Phase 2 panels
-13. AGENTS.md update
-14. Build + typecheck + verify demo
-15. Commit
-```
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/tasks/:taskId/claim` | Atomic task claim |
+| `POST` | `/tasks/:taskId/release` | Release task claim |
+| `POST` | `/tasks/:taskId/progress` | Report progress |
+| `GET` | `/tasks/:taskId/blockers` | Get active blockers |
+| `POST` | `/tasks/:taskId/intent` | Declare work intent |
+| `GET` | `/tasks/:taskId/intent` | Get declared intent |
+| `POST` | `/tasks/:taskId/contracts` | Declare a contract |
+| `GET` | `/tasks/:taskId/contracts` | List task contracts |
+| `POST` | `/tasks/:taskId/files/reserve` | Reserve files |
+| `POST` | `/tasks/:taskId/files/release` | Release files |
+| `GET` | `/projects/:projectId/files/active` | Active file reservations |
+| `POST` | `/agent-sessions` | Create agent session |
+| `POST` | `/agent-sessions/:id/heartbeat` | Send heartbeat |
+| `POST` | `/agent-sessions/:id/end` | End session |
+| `GET` | `/agent-sessions/:id` | Get session |
+| `GET` | `/projects/:projectId/agent-sessions` | List active sessions |
+| `POST` | `/coordination/begin` | begin_task preflight |
+| `GET` | `/projects/:projectId/coordination/risks` | Get contract risks |
+| `GET` | `/projects/:projectId/activity` | Activity feed |
 
 ---
 
@@ -194,27 +203,38 @@ Built output: `apps/mcp-server/dist/index.js`
 
 ```
 Developer A claims T-102 (Build Login API)
-  → Bob calls begin_task(T-102)
-  → Bob declares: files=[AuthController.ts, AuthService.ts], MODIFIES POST /api/login
-  → Bob reserves files
+  → Bob calls begin_task(T-102, userId)
+  → Bob receives READY preflight
+  → Bob calls declare_work_intent(T-102, files=[AuthController.ts, AuthService.ts], apis=[POST /api/login])
+  → Bob calls reserve_files(T-102, [AuthController.ts, AuthService.ts])
   → Dashboard shows: Maki / IBM Bob / T-102 / WORKING
 
 Developer B claims T-103 (Build Login Frontend)
-  → Bob calls begin_task(T-103)
-  → System detects: T-103 CONSUMES POST /api/login, T-102 MODIFIES it
-  → Bob receives: CONTRACT RISK warning
+  → Bob calls begin_task(T-103, userId)
+  → Bob declares: CONSUMES POST /api/login
+  → System detects: T-102 MODIFIES POST /api/login, T-103 CONSUMES it
+  → Bob receives: READY_WITH_WARNINGS + CONTRACT RISK warning
   → Bob tries to reserve AuthService.ts
   → System detects: FILE CONFLICT (already held by Maki/T-102)
-  → Both dashboards update in real time
+  → Both dashboards update on next refresh
 
 Agent A reports progress
   → Activity feed updates live
 
 Agent A stops without releasing
-  → After 60-90s, session marked STALE
+  → After 90s, session marked STALE
   → Reservations marked EXPIRED
-  → No stale state remains
 ```
+
+---
+
+## Phase 3 — Remaining
+
+- `POST /tasks/:taskId/request-review` — request human review
+- `POST /tasks/:taskId/complete` — mark task as completed
+- Dependency blocking enforcement (optional)
+- File release on task completion
+- GitHub integration (Phase 4)
 
 ---
 
@@ -225,8 +245,8 @@ Agent A stops without releasing
 3. File reservations are advisory (soft) — never hard locks
 4. Task claiming uses DB transactions — never frontend-enforced
 5. Shared types from `@arxion/types` — never redefine locally
-6. No Redis, Kafka, RabbitMQ — realtime via in-process EventEmitter + Socket.IO
+6. No Redis, Kafka, RabbitMQ — realtime via in-process EventEmitter
 
 ---
 
-*Last updated: Phase 2 in progress — schema + types done, building API modules*
+*Last updated: Phase 2 complete — all backend modules, MCP tools, and frontend panels implemented*
