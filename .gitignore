@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+.next/
+out/
+build/
+
+# Environment variables — never commit real credentials
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+scripts/*.log
+
+# IDE and OS
+.DS_Store
+Thumbs.db
+.vscode/settings.json
+
+# Bob workspace config — contains machine-specific absolute paths
+.bob/
+
+# TypeScript incremental build cache
+*.tsbuildinfo
+
+# Prisma generated client (regenerated via pnpm db:generate)
+node_modules/.prisma/
+
+# pnpm virtual store
+.pnpm-store/
