@@ -415,13 +415,30 @@ Always call this before reserving files or declaring contracts.`,
         ? `${d.gitLink.branchName ?? '(not set)'} | behind: ${d.gitLink.behindCount ?? 'N/A'} | commit: ${d.gitLink.latestCommitSha?.slice(0, 7) ?? 'unknown'}`
         : '(not configured)';
 
+      // Phase 5: readiness + pending handoffs (fetched separately — begin_task is a Phase 2 endpoint)
+      let readinessLine = '';
+      let handoffWarning = '';
+      try {
+        const readiness = await apiGet<{ state: string; reasons: string[] }>(`/tasks/${d.task.displayId}/readiness`);
+        readinessLine = `\n📊 Task Readiness: ${readiness.state}\n  ${readiness.reasons[0] ?? ''}`;
+        if (readiness.state === 'WAITING_FOR_CONTEXT' || readiness.state === 'INTERRUPTED') {
+          const handoffs = await apiGet<Array<{ id: string; status: string; summary: string }>>(`/tasks/${d.task.displayId}/handoffs`);
+          const pending = handoffs.filter((h) => h.status === 'PENDING' || h.status === 'DELIVERED');
+          if (pending.length > 0) {
+            handoffWarning = `\n\n🤝 PENDING HANDOFFS (${pending.length}) — acknowledgement required:\n${pending.map((h) => `  • ${h.id.slice(-8)}: ${h.summary}`).join('\n')}\n  → Call acknowledge_handoff to proceed.`;
+          }
+        }
+      } catch {
+        // non-fatal
+      }
+
       return {
         content: [{
           type: 'text',
           text: `${statusEmoji} COORDINATION STATUS: ${d.coordinationStatus}
 ════════════════════════════════════════════════
 Task:       ${d.task.displayId} — ${d.task.title}
-Session ID: ${d.sessionId}
+Session ID: ${d.sessionId}${readinessLine}
 
 Blocked Dependencies:
 ${depLines}
@@ -442,7 +459,7 @@ ${activeRiskLines}
 ${contextUpdateLines}
 
 🌿 Branch Status:
-  ${branchLine}
+  ${branchLine}${handoffWarning}
 ════════════════════════════════════════════════
 ${d.coordinationStatus === 'BLOCKED' ? '🚫 Task is BLOCKED — resolve dependencies before proceeding.' : ''}
 ${d.coordinationStatus === 'READY_WITH_WARNINGS' ? '⚠️  Proceed with caution — coordinate with teammates about conflicts/risks.' : ''}
@@ -1690,12 +1707,373 @@ ${s.isDiverged ? `⚠️  ${s.behindCount} commit(s) behind base — rebase reco
   },
 );
 
+// ── Phase 5 Tools ─────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'get_task_handoffs',
+  {
+    description: `Get all pending/delivered handoffs for a task.
+A handoff contains structured context from a completed upstream task — contracts, decisions, changes, remaining risks.
+Call this via begin_task automatically, or explicitly when resuming work on a task.`,
+    inputSchema: {
+      task_id: z.string().describe('Task ID or display ID (e.g. "T-103")'),
+    },
+  },
+  async ({ task_id }) => {
+    try {
+      const handoffs = await apiGet<Array<Record<string, unknown>>>(`/tasks/${task_id}/handoffs`);
+      if (handoffs.length === 0) {
+        return { content: [{ type: 'text', text: `No pending handoffs for task ${task_id}.` }] };
+      }
+      const lines = handoffs.map((h) => {
+        const payload = h['payload'] as Record<string, unknown> | undefined;
+        const contracts = (payload?.['finalContracts'] as unknown[] | undefined) ?? [];
+        return `[${String(h['status'])}] ${String(h['id']).slice(-8)} — from ${String(payload?.['sourceTaskDisplayId'] ?? '?')} → ${String(payload?.['targetTaskDisplayId'] ?? '?')}
+  Summary: ${String(h['summary'])}
+  Contracts: ${contracts.length > 0 ? contracts.map((c) => String((c as Record<string, unknown>)['name'])).join(', ') : 'none'}
+  Revision: ${String(h['sourceRevision'] ?? 'unknown')}`;
+      }).join('\n\n');
+      return { content: [{ type: 'text', text: `HANDOFFS FOR ${task_id}:\n\n${lines}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `get_task_handoffs failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'get_handoff',
+  {
+    description: 'Get full details of a specific handoff by ID.',
+    inputSchema: {
+      handoff_id: z.string().describe('Handoff ID'),
+    },
+  },
+  async ({ handoff_id }) => {
+    try {
+      const h = await apiGet<Record<string, unknown>>(`/handoffs/${handoff_id}`);
+      const payload = h['payload'] as Record<string, unknown> | undefined;
+      return {
+        content: [{
+          type: 'text',
+          text: `HANDOFF ${handoff_id}
+Status: ${String(h['status'])}
+Summary: ${String(h['summary'])}
+Revision: ${String(h['sourceRevision'] ?? 'unknown')}
+
+Final Contracts:
+${((payload?.['finalContracts'] as unknown[]) ?? []).map((c) => `  • ${String((c as Record<string, unknown>)['name'])} (${String((c as Record<string, unknown>)['type'])})`).join('\n') || '  (none)'}
+
+Relevant Decisions:
+${((payload?.['relevantDecisions'] as unknown[]) ?? []).map((d) => `  • ${String((d as Record<string, unknown>)['title'])}: ${String((d as Record<string, unknown>)['decision'])}`).join('\n') || '  (none)'}
+
+Relevant Changes:
+${((payload?.['relevantChanges'] as unknown[]) ?? []).map((c) => `  • [${String((c as Record<string, unknown>)['changeType'])}] ${String((c as Record<string, unknown>)['filePath'])}`).join('\n') || '  (none)'}
+
+Remaining Risks:
+${((payload?.['remainingRisks'] as unknown[]) ?? []).map((r) => `  • [${String((r as Record<string, unknown>)['severity'])}] ${String((r as Record<string, unknown>)['title'])}`).join('\n') || '  (none)'}
+
+Recommended Next Check:
+  ${String(payload?.['recommendedNextCheck'] ?? 'none')}`,
+        }],
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `get_handoff failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'acknowledge_handoff',
+  {
+    description: `Acknowledge a handoff to confirm you have received and understood the upstream context.
+Required before a task transitions from WAITING_FOR_CONTEXT to READY.
+Stores your agent session ID as proof of receipt.`,
+    inputSchema: {
+      handoff_id: z.string().describe('Handoff ID to acknowledge'),
+      agent_session_id: z.string().optional().describe('Your current agent session ID from begin_task'),
+    },
+  },
+  async ({ handoff_id, agent_session_id }) => {
+    try {
+      const result = await apiPost<Record<string, unknown>>(`/handoffs/${handoff_id}/acknowledge`, { agentSessionId: agent_session_id });
+      return { content: [{ type: 'text', text: `✅ Handoff ${handoff_id} acknowledged. Status: ${String(result['status'])}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `acknowledge_handoff failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'get_task_readiness',
+  {
+    description: `Get the calculated readiness state for a task.
+States: READY | BLOCKED_BY_DEPENDENCY | AT_RISK | WAITING_FOR_REVIEW | WAITING_FOR_CONTEXT | INTERRUPTED
+Always includes structured reasons — never an unexplained label.`,
+    inputSchema: {
+      task_id: z.string().describe('Task ID or display ID'),
+      recalculate: z.boolean().optional().describe('Force recalculation (default: use cached)'),
+    },
+  },
+  async ({ task_id, recalculate }) => {
+    try {
+      const endpoint = recalculate
+        ? `/tasks/${task_id}/readiness/recalculate`
+        : `/tasks/${task_id}/readiness`;
+      const r = await (recalculate
+        ? apiPost<Record<string, unknown>>(endpoint, {})
+        : apiGet<Record<string, unknown>>(endpoint));
+      const reasons = (r['reasons'] as string[] | undefined) ?? [];
+      return {
+        content: [{
+          type: 'text',
+          text: `READINESS: ${String(r['state'])}
+Task: ${task_id}
+Reasons:
+${reasons.map((reason) => `  • ${reason}`).join('\n') || '  (none)'}
+Evaluated: ${String(r['evaluatedAt'] ?? r['sourceRevision'] ?? 'N/A')}`,
+        }],
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `get_task_readiness failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'get_recovery_context',
+  {
+    description: `Get recovery context for an interrupted task.
+Returns the latest recovery snapshot plus a delta of what changed while the agent was away.
+Call this after resume_task to understand what work is pending.`,
+    inputSchema: {
+      task_id: z.string().describe('Task ID or display ID'),
+    },
+  },
+  async ({ task_id }) => {
+    try {
+      const ctx = await apiGet<{
+        snapshot: Record<string, unknown>;
+        delta: { newDecisions: unknown[]; newRisks: unknown[]; branchAdvancedBy: number; newContextUpdates: unknown[]; newHandoffs: unknown[] };
+        currentContext: Record<string, unknown>;
+      }>(`/tasks/${task_id}/recovery`);
+
+      const s = ctx.snapshot;
+      const d = ctx.delta;
+
+      return {
+        content: [{
+          type: 'text',
+          text: `RECOVERY CONTEXT — ${task_id}
+Trigger: ${String(s['trigger'])}
+Last Revision: ${String(s['lastKnownRevision'] ?? 'unknown')}
+Last Progress: ${String(s['lastProgressMessage'] ?? '(none)')}
+
+WHILE YOU WERE AWAY:
+  Branch advanced by: ${d.branchAdvancedBy} commit(s)
+  New decisions: ${d.newDecisions.length}
+  New risks: ${d.newRisks.length}
+  New context updates: ${d.newContextUpdates.length}
+  New handoffs: ${d.newHandoffs.length}
+${d.newDecisions.length > 0 ? '\nNew Decisions:\n' + d.newDecisions.map((dec) => `  • ${String((dec as Record<string, unknown>)['title'])}`).join('\n') : ''}
+${d.newRisks.length > 0 ? '\nNew Risks:\n' + d.newRisks.map((r) => `  • [${String((r as Record<string, unknown>)['severity'])}] ${String((r as Record<string, unknown>)['title'])}`).join('\n') : ''}`,
+        }],
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `get_recovery_context failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'resume_task',
+  {
+    description: `Resume an interrupted task. Creates a new agent session and returns recovery context + delta.
+Stale reservations are NOT inherited — you will need to re-reserve files you need.
+Call get_recovery_context after this to see what changed while the previous session was away.`,
+    inputSchema: {
+      task_id: z.string().describe('Task ID or display ID to resume'),
+      user_id: z.string().describe('Developer user ID'),
+      agent_type: z.string().optional().describe('Agent type (default: IBM_BOB)'),
+    },
+  },
+  async ({ task_id, user_id, agent_type }) => {
+    try {
+      const result = await apiPost<{
+        session: Record<string, unknown>;
+        snapshot: Record<string, unknown> | null;
+        delta: Record<string, unknown> | null;
+        contextPackage: Record<string, unknown>;
+      }>(`/tasks/${task_id}/resume`, { userId: user_id, agentType: agent_type });
+
+      const sessionId = String(result.session['id']);
+      const hasDelta = !!result.delta;
+      const readiness = (result.contextPackage['content'] as Record<string, unknown> | undefined)?.['readiness'] as Record<string, unknown> | undefined;
+
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ Task ${task_id} resumed.
+New Session ID: ${sessionId}
+Readiness: ${String(readiness?.['state'] ?? 'UNKNOWN')}
+Recovery snapshot: ${result.snapshot ? 'available' : 'none'}
+Delta available: ${hasDelta ? 'yes — call get_recovery_context for details' : 'no'}
+
+⚠️  Stale reservations were NOT inherited. Re-reserve files you need via reserve_files.`,
+        }],
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `resume_task failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'get_parallel_safety',
+  {
+    description: `Check whether two tasks can safely proceed in parallel.
+States: SAFE | SAFE_WITH_WARNINGS | UNSAFE | UNKNOWN
+All states include structured reasons. This is an advisory tool — humans make scheduling decisions.`,
+    inputSchema: {
+      project_id: z.string().describe('Project ID'),
+      task_a_id: z.string().describe('First task ID or display ID'),
+      task_b_id: z.string().describe('Second task ID or display ID'),
+    },
+  },
+  async ({ project_id, task_a_id, task_b_id }) => {
+    try {
+      const result = await apiGet<{
+        state: string;
+        reasons: string[];
+        warnings: string[];
+      }>(`/projects/${project_id}/parallel-safety?taskAId=${task_a_id}&taskBId=${task_b_id}`);
+
+      const emoji = result.state === 'SAFE' ? '✅' : result.state === 'SAFE_WITH_WARNINGS' ? '⚠️' : result.state === 'UNSAFE' ? '🚫' : '❓';
+      return {
+        content: [{
+          type: 'text',
+          text: `${emoji} PARALLEL SAFETY: ${result.state}
+Tasks: ${task_a_id} + ${task_b_id}
+
+Reasons:
+${result.reasons.map((r) => `  • ${r}`).join('\n') || '  (none)'}
+${result.warnings.length > 0 ? `\nWarnings:\n${result.warnings.map((w) => `  ⚠️  ${w}`).join('\n')}` : ''}`,
+        }],
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `get_parallel_safety failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'get_safe_parallel_tasks',
+  {
+    description: `Get all task pairs that can safely proceed in parallel for a project.
+Returns pairs classified as SAFE or SAFE_WITH_WARNINGS.
+This is advisory — use it to identify parallelizable work.`,
+    inputSchema: {
+      project_id: z.string().describe('Project ID'),
+    },
+  },
+  async ({ project_id }) => {
+    try {
+      const pairs = await apiGet<Array<{
+        taskA: { displayId: string; title: string };
+        taskB: { displayId: string; title: string };
+        safety: { state: string; warnings: string[] };
+      }>>(`/projects/${project_id}/safe-parallel-tasks`);
+
+      if (pairs.length === 0) {
+        return { content: [{ type: 'text', text: `No safe parallel task pairs found for project ${project_id}.` }] };
+      }
+
+      const lines = pairs.map((p) =>
+        `${p.safety.state === 'SAFE' ? '✅' : '⚠️'} ${p.taskA.displayId} + ${p.taskB.displayId}${p.safety.warnings.length > 0 ? ` (warning: ${p.safety.warnings[0]})` : ''}`,
+      ).join('\n');
+
+      return { content: [{ type: 'text', text: `SAFE PARALLEL PAIRS (${pairs.length}):\n${lines}` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `get_safe_parallel_tasks failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
+server.registerTool(
+  'get_coordinator_summary',
+  {
+    description: `Get a project-level coordination summary.
+Shows: ready tasks, waiting tasks (with reasons), interrupted tasks (with recovery availability),
+safe parallel work groups, and high/critical risks.
+Does not make assignments or scheduling decisions.`,
+    inputSchema: {
+      project_id: z.string().describe('Project ID'),
+    },
+  },
+  async ({ project_id }) => {
+    try {
+      const s = await apiGet<{
+        readyTasks: Array<{ displayId: string; title: string }>;
+        waitingTasks: Array<{ displayId: string; title: string; reason: string }>;
+        interruptedTasks: Array<{ displayId: string; title: string; hasRecovery: boolean }>;
+        safeParallelGroups: Array<Array<{ displayId: string; title: string }>>;
+        highRisks: Array<{ title: string; severity: string }>;
+        generatedAt: string;
+      }>(`/projects/${project_id}/coordinator-summary`);
+
+      const readyLines = s.readyTasks.length > 0
+        ? s.readyTasks.map((t) => `  ✅ ${t.displayId} — ${t.title}`).join('\n')
+        : '  (none)';
+
+      const waitingLines = s.waitingTasks.length > 0
+        ? s.waitingTasks.map((t) => `  ⏳ ${t.displayId} — ${t.title}\n     Reason: ${t.reason}`).join('\n')
+        : '  (none)';
+
+      const interruptedLines = s.interruptedTasks.length > 0
+        ? s.interruptedTasks.map((t) => `  🔴 ${t.displayId} — ${t.title} ${t.hasRecovery ? '[recovery available]' : '[no snapshot]'}`).join('\n')
+        : '  (none)';
+
+      const parallelLines = s.safeParallelGroups.length > 0
+        ? s.safeParallelGroups.map((g, i) => `  Group ${i + 1}: ${g.map((t) => t.displayId).join(' + ')}`).join('\n')
+        : '  (none)';
+
+      const riskLines = s.highRisks.length > 0
+        ? s.highRisks.map((r) => `  🔴 [${r.severity}] ${r.title}`).join('\n')
+        : '  (none)';
+
+      return {
+        content: [{
+          type: 'text',
+          text: `PROJECT COORDINATION SUMMARY
+Generated: ${s.generatedAt}
+
+READY TASKS:
+${readyLines}
+
+WAITING TASKS:
+${waitingLines}
+
+INTERRUPTED TASKS:
+${interruptedLines}
+
+SAFE PARALLEL GROUPS:
+${parallelLines}
+
+HIGH/CRITICAL RISKS:
+${riskLines}`,
+        }],
+      };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `get_coordinator_summary failed: ${error instanceof Error ? error.message : String(error)}` }], isError: true };
+    }
+  },
+);
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Arxion MCP Server v0.4.0 (Phase 4) running on stdio');
+  console.error('Arxion MCP Server v0.5.0 (Phase 5) running on stdio');
   console.error(`Backend API: ${API_BASE_URL}`);
 }
 

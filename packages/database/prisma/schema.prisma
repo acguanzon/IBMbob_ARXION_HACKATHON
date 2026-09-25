@@ -300,6 +300,10 @@ model Project {
   codeRelationships   CodeRelationship[]
   coordinationRisks   CoordinationRisk[]
   contextUpdates      ContextUpdate[]
+  // Phase 5
+  handoffs            TaskHandoff[]
+  parallelSafetyEvals ParallelSafetyEvaluation[]
+  agentCapabilities   AgentIntegrationCapability[]
 
   @@map("projects")
 }
@@ -355,6 +359,14 @@ model Task {
   affectedRisks     CoordinationRisk[]     @relation("AffectedRisks")
   sourceUpdates     ContextUpdate[]        @relation("SourceUpdates")
   affectedUpdates   ContextUpdate[]        @relation("AffectedUpdates")
+  // Phase 5
+  readinessEvals    TaskReadinessEvaluation[]
+  sourceHandoffs    TaskHandoff[]          @relation("HandoffSource")
+  targetHandoffs    TaskHandoff[]          @relation("HandoffTarget")
+  contextPackages   TaskContextPackage[]
+  recoverySnapshots RecoverySnapshot[]
+  parallelSafetyA   ParallelSafetyEvaluation[] @relation("ParallelSafetyA")
+  parallelSafetyB   ParallelSafetyEvaluation[] @relation("ParallelSafetyB")
 
   @@unique([projectId, displayId])
   @@map("tasks")
@@ -802,4 +814,163 @@ model ContextUpdate {
   entity       CodeEntity? @relation(fields: [entityId], references: [id])
 
   @@map("context_updates")
+}
+
+// ─── Phase 5 Enums ────────────────────────────────────────────────────────────
+
+// Phase 5: Derived readiness state for a task (calculated, not manually set)
+enum TaskReadinessState {
+  READY
+  BLOCKED_BY_DEPENDENCY
+  AT_RISK
+  WAITING_FOR_REVIEW
+  WAITING_FOR_CONTEXT
+  INTERRUPTED
+}
+
+// Phase 5: Handoff lifecycle
+enum HandoffStatus {
+  PENDING
+  DELIVERED
+  ACKNOWLEDGED
+  SUPERSEDED
+}
+
+// Phase 5: Context package lifecycle
+enum ContextPackageStatus {
+  CURRENT
+  STALE
+  SUPERSEDED
+}
+
+// Phase 5: Parallel safety classification
+enum ParallelSafetyState {
+  SAFE
+  SAFE_WITH_WARNINGS
+  UNSAFE
+  UNKNOWN
+}
+
+// Phase 5: Recovery snapshot trigger
+enum RecoveryTrigger {
+  SESSION_STALE
+  SESSION_ENDED_UNEXPECTEDLY
+  USER_PAUSED
+}
+
+// ─── Phase 5 Models ───────────────────────────────────────────────────────────
+
+/// Phase 5: Calculated readiness state for a task with structured reasons
+model TaskReadinessEvaluation {
+  id             String             @id @default(cuid())
+  taskId         String
+  state          TaskReadinessState
+  reasons        Json               // string[]
+  sourceRevision String?            // latest commit SHA at evaluation time
+  evaluatedAt    DateTime           @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("task_readiness_evaluations")
+}
+
+/// Phase 5: Structured handoff from a completed/upstream task to a dependent task
+model TaskHandoff {
+  id                          String       @id @default(cuid())
+  projectId                   String
+  sourceTaskId                String
+  targetTaskId                String
+  sourceRevision              String?      // commit SHA of source task at time of handoff
+  status                      HandoffStatus @default(PENDING)
+  summary                     String       // human-readable summary
+  payload                     Json         // structured handoff payload
+  createdAt                   DateTime     @default(now())
+  deliveredAt                 DateTime?
+  acknowledgedAt              DateTime?
+  acknowledgedByAgentSessionId String?
+  supersededById              String?      // FK to newer TaskHandoff if superseded
+
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceTask   Task     @relation("HandoffSource", fields: [sourceTaskId], references: [id], onDelete: Cascade)
+  targetTask   Task     @relation("HandoffTarget", fields: [targetTaskId], references: [id], onDelete: Cascade)
+
+  @@map("task_handoffs")
+}
+
+/// Phase 5: Versioned context package delivered to an agent when beginning/resuming work
+model TaskContextPackage {
+  id                   String               @id @default(cuid())
+  taskId               String
+  contextVersion       Int                  @default(1)
+  generatedAt          DateTime             @default(now())
+  sourceProjectRevision String?
+  status               ContextPackageStatus @default(CURRENT)
+  content              Json                 // full structured context payload
+  supersededAt         DateTime?
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("task_context_packages")
+}
+
+/// Phase 5: Recovery snapshot created when a session goes stale or ends unexpectedly
+model RecoverySnapshot {
+  id                     String          @id @default(cuid())
+  taskId                 String
+  projectId              String
+  previousAgentSessionId String?
+  trigger                RecoveryTrigger
+  lastKnownRevision      String?
+  lastProgressMessage    String?
+  activeWorkIntent       Json?           // copy of TaskWorkIntent
+  actualScope            Json?           // list of actual file paths
+  activeContracts        Json?           // relevant TaskContract records
+  openRisks              Json?           // relevant CoordinationRisk summaries
+  pendingContextUpdates  Json?           // unread ContextUpdate summaries
+  pendingHandoffs        Json?           // pending TaskHandoff summaries
+  createdAt              DateTime        @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@map("recovery_snapshots")
+}
+
+/// Phase 5: Parallel safety evaluation between two tasks
+model ParallelSafetyEvaluation {
+  id          String             @id @default(cuid())
+  projectId   String
+  taskAId     String
+  taskBId     String
+  state       ParallelSafetyState
+  reasons     Json               // string[]
+  warnings    Json               // string[]
+  evaluatedAt DateTime           @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  taskA   Task    @relation("ParallelSafetyA", fields: [taskAId], references: [id], onDelete: Cascade)
+  taskB   Task    @relation("ParallelSafetyB", fields: [taskBId], references: [id], onDelete: Cascade)
+
+  @@unique([taskAId, taskBId])
+  @@map("parallel_safety_evaluations")
+}
+
+/// Phase 5: Registered capability profile for an agent integration
+model AgentIntegrationCapability {
+  id                    String   @id @default(cuid())
+  projectId             String
+  agentType             String   // e.g. "IBM_BOB", "CURSOR"
+  supportsMcp           Boolean  @default(false)
+  supportsHeartbeat     Boolean  @default(false)
+  supportsContextUpdates Boolean @default(false)
+  supportsHandoffs      Boolean  @default(false)
+  supportsRecovery      Boolean  @default(false)
+  supportsReviewTools   Boolean  @default(false)
+  protocolVersion       String?  // e.g. "ACP/1.0"
+  registeredAt          DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, agentType])
+  @@map("agent_integration_capabilities")
 }

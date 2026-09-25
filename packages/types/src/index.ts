@@ -936,7 +936,19 @@ export type DomainEventType =
   | 'context_update.created'
   | 'context_update.acknowledged'
   | 'branch.diverged'
-  | 'merge_risk.detected';
+  | 'merge_risk.detected'
+  // Phase 5
+  | 'task.readiness_changed'
+  | 'handoff.created'
+  | 'handoff.delivered'
+  | 'handoff.acknowledged'
+  | 'handoff.superseded'
+  | 'context_package.generated'
+  | 'context_package.superseded'
+  | 'recovery_snapshot.created'
+  | 'task.resume_started'
+  | 'task.resume_completed'
+  | 'parallel_safety.changed';
 
 export interface DomainEvent<T = unknown> {
   type: DomainEventType;
@@ -944,3 +956,181 @@ export interface DomainEvent<T = unknown> {
   payload: T;
   timestamp: string;
 }
+
+// ─── Phase 5: Enums ───────────────────────────────────────────────────────────
+
+export const TaskReadinessStateSchema = z.enum([
+  'READY',
+  'BLOCKED_BY_DEPENDENCY',
+  'AT_RISK',
+  'WAITING_FOR_REVIEW',
+  'WAITING_FOR_CONTEXT',
+  'INTERRUPTED',
+]);
+export type TaskReadinessState = z.infer<typeof TaskReadinessStateSchema>;
+
+export const HandoffStatusSchema = z.enum([
+  'PENDING',
+  'DELIVERED',
+  'ACKNOWLEDGED',
+  'SUPERSEDED',
+]);
+export type HandoffStatus = z.infer<typeof HandoffStatusSchema>;
+
+export const ContextPackageStatusSchema = z.enum(['CURRENT', 'STALE', 'SUPERSEDED']);
+export type ContextPackageStatus = z.infer<typeof ContextPackageStatusSchema>;
+
+export const ParallelSafetyStateSchema = z.enum([
+  'SAFE',
+  'SAFE_WITH_WARNINGS',
+  'UNSAFE',
+  'UNKNOWN',
+]);
+export type ParallelSafetyState = z.infer<typeof ParallelSafetyStateSchema>;
+
+export const RecoveryTriggerSchema = z.enum([
+  'SESSION_STALE',
+  'SESSION_ENDED_UNEXPECTEDLY',
+  'USER_PAUSED',
+]);
+export type RecoveryTrigger = z.infer<typeof RecoveryTriggerSchema>;
+
+// ─── Phase 5: Schemas + Types ─────────────────────────────────────────────────
+
+export const TaskReadinessEvaluationSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  state: TaskReadinessStateSchema,
+  reasons: z.array(z.string()),
+  sourceRevision: z.string().nullable(),
+  evaluatedAt: z.string(),
+});
+export type TaskReadinessEvaluation = z.infer<typeof TaskReadinessEvaluationSchema>;
+
+export const HandoffPayloadSchema = z.object({
+  sourceTaskDisplayId: z.string(),
+  targetTaskDisplayId: z.string(),
+  completedRevision: z.string().nullable(),
+  finalContracts: z.array(z.object({ name: z.string(), type: z.string(), relationship: z.string() })),
+  relevantDecisions: z.array(z.object({ title: z.string(), decision: z.string() })),
+  relevantChanges: z.array(z.object({ filePath: z.string(), changeType: z.string() })),
+  resolvedRisks: z.array(z.object({ title: z.string() })),
+  remainingRisks: z.array(z.object({ title: z.string(), severity: z.string() })),
+  recommendedNextCheck: z.string().nullable(),
+});
+export type HandoffPayload = z.infer<typeof HandoffPayloadSchema>;
+
+export const TaskHandoffSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  sourceTaskId: z.string(),
+  targetTaskId: z.string(),
+  sourceRevision: z.string().nullable(),
+  status: HandoffStatusSchema,
+  summary: z.string(),
+  payload: HandoffPayloadSchema,
+  createdAt: z.string(),
+  deliveredAt: z.string().nullable(),
+  acknowledgedAt: z.string().nullable(),
+  acknowledgedByAgentSessionId: z.string().nullable(),
+  supersededById: z.string().nullable(),
+});
+export type TaskHandoff = z.infer<typeof TaskHandoffSchema>;
+
+export const TaskContextPackageSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  contextVersion: z.number(),
+  generatedAt: z.string(),
+  sourceProjectRevision: z.string().nullable(),
+  status: ContextPackageStatusSchema,
+  content: z.object({
+    task: z.record(z.unknown()),
+    readiness: TaskReadinessEvaluationSchema.optional(),
+    dependencies: z.array(z.record(z.unknown())),
+    pendingHandoffs: z.array(z.record(z.unknown())),
+    activeContracts: z.array(z.record(z.unknown())),
+    relevantDecisions: z.array(z.record(z.unknown())),
+    openRisks: z.array(z.record(z.unknown())),
+    unreadContextUpdates: z.array(z.record(z.unknown())),
+    branchStatus: z.record(z.unknown()).nullable(),
+    actualScope: z.record(z.unknown()).nullable(),
+    activeAgents: z.array(z.record(z.unknown())),
+    recoveryState: z.record(z.unknown()).nullable(),
+    critical: z.array(z.string()),
+    important: z.array(z.string()),
+    background: z.array(z.string()),
+  }),
+  supersededAt: z.string().nullable(),
+});
+export type TaskContextPackage = z.infer<typeof TaskContextPackageSchema>;
+
+export const RecoverySnapshotSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  projectId: z.string(),
+  previousAgentSessionId: z.string().nullable(),
+  trigger: RecoveryTriggerSchema,
+  lastKnownRevision: z.string().nullable(),
+  lastProgressMessage: z.string().nullable(),
+  activeWorkIntent: z.unknown().nullable(),
+  actualScope: z.unknown().nullable(),
+  activeContracts: z.unknown().nullable(),
+  openRisks: z.unknown().nullable(),
+  pendingContextUpdates: z.unknown().nullable(),
+  pendingHandoffs: z.unknown().nullable(),
+  createdAt: z.string(),
+});
+export type RecoverySnapshot = z.infer<typeof RecoverySnapshotSchema>;
+
+export const RecoveryContextSchema = z.object({
+  snapshot: RecoverySnapshotSchema,
+  delta: z.object({
+    newDecisions: z.array(z.record(z.unknown())),
+    newRisks: z.array(z.record(z.unknown())),
+    branchAdvancedBy: z.number(),
+    newContextUpdates: z.array(z.record(z.unknown())),
+    newHandoffs: z.array(z.record(z.unknown())),
+  }),
+  currentContext: z.record(z.unknown()),
+});
+export type RecoveryContext = z.infer<typeof RecoveryContextSchema>;
+
+export const ParallelSafetyEvaluationSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  taskAId: z.string(),
+  taskBId: z.string(),
+  state: ParallelSafetyStateSchema,
+  reasons: z.array(z.string()),
+  warnings: z.array(z.string()),
+  evaluatedAt: z.string(),
+});
+export type ParallelSafetyEvaluation = z.infer<typeof ParallelSafetyEvaluationSchema>;
+
+export const AgentIntegrationCapabilitySchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  agentType: z.string(),
+  supportsMcp: z.boolean(),
+  supportsHeartbeat: z.boolean(),
+  supportsContextUpdates: z.boolean(),
+  supportsHandoffs: z.boolean(),
+  supportsRecovery: z.boolean(),
+  supportsReviewTools: z.boolean(),
+  protocolVersion: z.string().nullable(),
+  registeredAt: z.string(),
+  updatedAt: z.string(),
+});
+export type AgentIntegrationCapability = z.infer<typeof AgentIntegrationCapabilitySchema>;
+
+export const CoordinatorSummarySchema = z.object({
+  projectId: z.string(),
+  generatedAt: z.string(),
+  readyTasks: z.array(z.object({ taskId: z.string(), displayId: z.string(), title: z.string() })),
+  waitingTasks: z.array(z.object({ taskId: z.string(), displayId: z.string(), title: z.string(), reason: z.string() })),
+  interruptedTasks: z.array(z.object({ taskId: z.string(), displayId: z.string(), title: z.string(), hasRecovery: z.boolean() })),
+  safeParallelGroups: z.array(z.array(z.object({ taskId: z.string(), displayId: z.string(), title: z.string() }))),
+  highRisks: z.array(z.record(z.unknown())),
+});
+export type CoordinatorSummary = z.infer<typeof CoordinatorSummarySchema>;

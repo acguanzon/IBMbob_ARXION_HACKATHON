@@ -1,5 +1,6 @@
 import { prisma } from '@arxion/database';
 import { emitEvent } from './realtime.js';
+import { createRecoverySnapshot } from '../modules/phase5/recovery.service.js';
 
 // Check every 30 seconds
 const STALE_CHECK_INTERVAL_MS = 30_000;
@@ -51,6 +52,18 @@ async function checkStaleSessions(): Promise<void> {
     for (const session of stale as Array<{ id: string; projectId: string; userId: string; taskId: string | null }>) {
       emitEvent('agent.stale', session.projectId, { sessionId: session.id });
       console.warn(`⚠️  Agent session ${session.id} marked STALE`);
+      // Phase 5: create recovery snapshot when a session goes stale
+      if (session.taskId) {
+        try {
+          await createRecoverySnapshot({
+            taskId: session.taskId,
+            previousAgentSessionId: session.id,
+            trigger: 'SESSION_STALE',
+          })
+        } catch {
+          // Non-fatal — recovery snapshot creation should not fail the watcher
+        }
+      }
     }
   } catch (err) {
     console.warn('⚠️  Staleness watcher: database unreachable, skipping check.', (err as Error).message);

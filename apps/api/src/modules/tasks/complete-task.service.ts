@@ -2,6 +2,7 @@ import { prisma } from '@arxion/database';
 import type { Prisma } from '@arxion/database';
 import type { CompleteTaskBody } from '@arxion/types';
 import { emitEvent } from '../../lib/realtime.js';
+import { createHandoffsForCompletedTask } from '../phase5/handoff.service.js';
 
 /**
  * Idempotent task completion.
@@ -152,6 +153,13 @@ export async function completeTask(taskId: string, body: CompleteTaskBody) {
 
   // 6. Re-evaluate dependent tasks (outside transaction for simplicity)
   await reevaluateDependents(task.id, task.projectId);
+
+  // Phase 5: create handoffs for downstream tasks + recalculate their readiness
+  try {
+    await createHandoffsForCompletedTask(task.id)
+  } catch {
+    // Non-fatal — handoff creation should not fail task completion
+  }
 
   return { task: result.completedTask, alreadyDone: false };
 }
