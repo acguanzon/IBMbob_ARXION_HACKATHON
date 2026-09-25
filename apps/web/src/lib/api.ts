@@ -38,4 +38,51 @@ export const api = {
     get: (taskId: string) =>
       apiFetch<import('@arxion/types').TaskWithRelations>(`/tasks/${taskId}`),
   },
+  agentSessions: {
+    listByProject: (projectId: string) =>
+      apiFetch<AgentSessionWithRelations[]>(`/projects/${projectId}/agent-sessions`),
+  },
+  fileReservations: {
+    listActive: (projectId: string) =>
+      apiFetch<FileReservationWithRelations[]>(`/projects/${projectId}/files/active`),
+  },
+  activity: {
+    listByProject: (projectId: string, limit = 30) =>
+      apiFetch<ActivityItemWithRelations[]>(`/projects/${projectId}/activity?limit=${limit}`),
+  },
 };
+
+// ── Inline types for Phase 2 API responses ────────────────────────────────────
+
+export interface AgentSessionWithRelations {
+  id: string;
+  userId: string;
+  taskId: string | null;
+  agentType: string;
+  status: string;
+  startedAt: string;
+  lastSeenAt: string;
+  user: { id: string; name: string; email: string };
+  task: { id: string; displayId: string; title: string } | null;
+}
+
+export interface FileReservationWithRelations {
+  id: string;
+  filePath: string;
+  status: string;
+  reservedAt: string;
+  leaseExpiresAt: string | null;
+  user: { id: string; name: string };
+  task: { id: string; displayId: string; title: string };
+  agentSession: { id: string; agentType: string } | null;
+}
+
+export interface ActivityItemWithRelations {
+  id: string;
+  type: string;
+  message: string;
+  createdAt: string;
+  user: { id: string; name: string } | null;
+  task: { id: string; displayId: string; title: string } | null;
+  agentSession: { id: string; agentType: string; status: string } | null;
+}

@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Arxion
 
 **Agent-agnostic collaboration layer for AI-assisted software development.**
@@ -28,34 +27,43 @@ The coding agents write the code. Git versions the code. **Arxion coordinates th
 HUMAN DEVELOPERS
       │
       ▼
-COLLABORATION WEB APP (Next.js)
+COLLABORATION WEB APP (Next.js, port 3000)
+  - Kanban task board
+  - Live agents panel (status dot per session)
+  - Live file reservations panel (with expiry)
+  - Conflict panel
+  - Activity feed (icons + time-ago)
       │
     REST API
       │
       ▼
-BACKEND APPLICATION (Fastify)
-      │
-      ├────────────────┐
-      ▼                ▼
- PostgreSQL      Realtime Events
-                       │
-                       ▼
-                  Web Clients
-
-
-CODING AGENTS (IBM Bob, etc.)
-      │
-      ▼
-MCP SERVER (adapter only)
+BACKEND APPLICATION (Fastify, port 3001)
+  ├── Tasks + Claiming (atomic DB transactions)
+  ├── Agent Sessions + Heartbeat + Stale detection
+  ├── File Reservations + Lease expiry
+  ├── Work Intent Declaration
+  ├── Contract Model (PROVIDES/MODIFIES/CONSUMES)
+  ├── Contract Risk Detection
+  ├── Coordination Preflight (begin_task)
+  ├── Activity Feed
+  └── Realtime Events (EventEmitter → future WebSocket)
       │
       ▼
-BACKEND APPLICATION
+PostgreSQL (arxion_dev)
+
+CODING AGENTS (IBM Bob, Cursor, Claude Code, etc.)
+      │
+      ▼
+MCP SERVER (stdio adapter, apps/mcp-server)
+      │
+      ▼
+BACKEND APPLICATION (same instance)
       │
       ▼
 PostgreSQL (same database)
 ```
 
-**The most important rule:** humans and AI agents share one source of truth — PostgreSQL, accessed through the backend API.
+**The most important rule:** humans and AI agents share one source of truth — PostgreSQL, accessed only through the backend API.
 
 The MCP server is a thin adapter. It never accesses the database directly.
 
@@ -76,8 +84,9 @@ The MCP server is a thin adapter. It never accesses the database directly.
 │   └── config/         — Shared environment/config utilities
 │
 ├── docs/
+├── docker-compose.yml  — PostgreSQL 16 for local development
 ├── AGENTS.md           — Guide for AI coding agents in this repo
-├── HANDOFF.md          — Project context and background
+├── CURRENT_HANDOFF.md  — Living development handoff document
 └── README.md           — This file
 ```
 
@@ -88,11 +97,11 @@ The MCP server is a thin adapter. It never accesses the database directly.
 | Layer | Technology |
 |---|---|
 | Frontend | Next.js 14, React, TypeScript, Tailwind CSS |
-| Backend | Node.js, TypeScript, Fastify |
-| Database | PostgreSQL, Prisma ORM |
+| Backend | Node.js 22, TypeScript, Fastify |
+| Database | PostgreSQL 16, Prisma ORM |
 | Validation | Zod |
-| Realtime | Socket.IO (Phase 2) |
-| Agent bridge | MCP server (TypeScript) |
+| Realtime | In-process EventEmitter (WebSocket upgrade in Phase 3) |
+| Agent bridge | MCP server (TypeScript, stdio) |
 | Monorepo | pnpm workspaces |
 
 ---
@@ -101,7 +110,7 @@ The MCP server is a thin adapter. It never accesses the database directly.
 
 - Node.js >= 20
 - pnpm >= 9
-- PostgreSQL running locally (or via Docker)
+- Docker (recommended) **or** a local PostgreSQL 16 instance
 
 ---
 
@@ -126,13 +135,27 @@ pnpm install
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your values. The minimum required:
+The defaults in `.env.example` work out of the box with the Docker setup:
 
 ```env
 DATABASE_URL="postgresql://postgres:password@localhost:5432/arxion_dev"
 ```
 
-### 4. Set up the database
+### 4. Start PostgreSQL
+
+**Option A — Docker (recommended):**
+
+```bash
+docker compose up -d
+```
+
+Starts PostgreSQL 16 on `localhost:5432`. Data persists in the `arxion_pgdata` named volume.
+
+**Option B — Local service (Windows):**
+
+Ensure your local `postgresql-x64-17` service is running. Password: `password`.
+
+### 5. Set up the database
 
 Generate the Prisma client:
 
@@ -183,12 +206,14 @@ The dashboard opens at `http://localhost:3000`.
 
 ### MCP Server
 
+The MCP server runs on stdio and is spawned automatically by IBM Bob via `.bob/mcp.json`.
+
+To build manually:
+
 ```bash
 cd apps/mcp-server
-pnpm dev
+pnpm build
 ```
-
-The MCP server runs on stdio (spawned by the MCP host).
 
 ---
 
@@ -201,8 +226,9 @@ See `.env.example` for the complete list.
 | `DATABASE_URL` | api | ✅ | PostgreSQL connection string |
 | `PORT` | api | — | API port (default: 3001) |
 | `NODE_ENV` | api | — | `development` or `production` |
-| `CORS_ORIGIN` | api | — | Allowed origin (default: http://localhost:3000) |
+| `INTERNAL_API_KEY` | api | — | Key checked on internal routes |
 | `NEXT_PUBLIC_API_URL` | web | — | Backend URL for the browser (default: http://localhost:3001) |
+| `NEXT_PUBLIC_WS_URL` | web | — | WebSocket URL (default: ws://localhost:3001) |
 | `MCP_API_BASE_URL` | mcp-server | — | Backend URL for MCP server (default: http://localhost:3001) |
 | `MCP_API_KEY` | mcp-server | — | Optional API key for internal calls |
 
@@ -235,14 +261,13 @@ PATCH  /tasks/:taskId
 GET    /tasks/:taskId/dependencies
 ```
 
-### Lifecycle (Phase 2+)
+### Task Lifecycle (Phase 2)
 
 ```
 POST   /tasks/:taskId/claim
-POST   /tasks/:taskId/start
+POST   /tasks/:taskId/release
 POST   /tasks/:taskId/progress
-POST   /tasks/:taskId/request-review
-POST   /tasks/:taskId/complete
+GET    /tasks/:taskId/blockers
 ```
 
 ### File Reservations (Phase 2)
@@ -257,8 +282,28 @@ GET    /projects/:projectId/files/active
 
 ```
 POST   /agent-sessions
-PATCH  /agent-sessions/:agentSessionId
+POST   /agent-sessions/:sessionId/heartbeat
+POST   /agent-sessions/:sessionId/end
+GET    /agent-sessions/:sessionId
 GET    /projects/:projectId/agent-sessions
+```
+
+### Coordination (Phase 2)
+
+```
+POST   /coordination/begin
+POST   /tasks/:taskId/work-intent
+GET    /tasks/:taskId/work-intent
+POST   /tasks/:taskId/contracts
+GET    /tasks/:taskId/contracts
+GET    /tasks/:taskId/contract-risks
+```
+
+### Activity Feed (Phase 2)
+
+```
+GET    /projects/:projectId/activity
+GET    /tasks/:taskId/activity
 ```
 
 ---
@@ -272,12 +317,12 @@ The MCP server allows AI coding agents (IBM Bob, Cursor, Claude Code, etc.) to i
 ```
 AI Agent (IBM Bob)
       │
-  get_task("T-102")
+  begin_task("T-102", userId)
       │
       ▼
 MCP Server (apps/mcp-server)
       │
-  GET /tasks/T-102
+  POST /coordination/begin
       │
       ▼
 Backend API (apps/api)
@@ -286,12 +331,12 @@ Backend API (apps/api)
 PostgreSQL
       │
       ▼
-Task returned to IBM Bob
+Preflight result (status + risks + context) returned to IBM Bob
 ```
 
 ### Configuring IBM Bob
 
-Add this to your Bob `mcp.json`:
+The server is pre-registered at `.bob/mcp.json`. For other environments, add this to your `mcp.json`:
 
 ```json
 {
@@ -308,20 +353,21 @@ Add this to your Bob `mcp.json`:
 }
 ```
 
-Build the MCP server first:
+### Available MCP Tools
 
-```bash
-cd apps/mcp-server
-pnpm build
-```
-
-### Available MCP Tools (Phase 1)
-
-| Tool | Description |
-|---|---|
-| `get_task` | Retrieve a task by display ID (e.g. T-102) or internal ID |
-| `get_project_context` | Retrieve project info, members, and task count |
-| `get_task_dependencies` | Get the dependency list for a task |
+| Tool | Phase | Description |
+|---|---|---|
+| `get_task` | 1 ✅ | Retrieve a task by display ID (e.g. T-102) or internal ID |
+| `get_project_context` | 1 ✅ | Retrieve project info, members, and task count |
+| `get_task_dependencies` | 1 ✅ | Get the dependency list for a task |
+| `claim_task` | 2 ✅ | Claim a task for an agent |
+| `begin_task` | 2 ✅ | Full coordination preflight — claim + session + context + contract risks |
+| `reserve_files` | 2 ✅ | Reserve files for modification (with conflict detection) |
+| `release_files` | 2 ✅ | Release file reservations |
+| `report_progress` | 2 ✅ | Report progress on a task |
+| `get_team_activity` | 2 ✅ | Get recent project activity feed |
+| `get_active_file_reservations` | 2 ✅ | See all active file reservations in a project |
+| `end_session` | 2 ✅ | End the current agent session |
 
 ---
 
@@ -346,24 +392,24 @@ Planned future integrations:
 
 ## Phase Roadmap
 
-| Phase | Features |
-|---|---|
-| **Phase 1** ✅ | Monorepo, Prisma schema, Fastify API, Next.js dashboard, seed data, `get_task` MCP tool |
-| **Phase 2** | Task claiming, agent sessions, file reservations, conflict detection, progress reporting, realtime |
-| **Phase 3** | Reviews, dependency blocking, task completion, file release, dependent task unlocking |
-| **Phase 4** | GitHub integration, PR tracking, branch association, richer agent integrations |
+| Phase | Status | Features |
+|---|---|---|
+| **Phase 1** | ✅ Complete | Monorepo, Prisma schema, Fastify API, Next.js dashboard, seed data, 3 MCP tools |
+| **Phase 2** | ✅ Complete | Task claiming, agent sessions, file reservations, conflict detection, progress reporting, coordination preflight, contract risk, activity feed, 8 new MCP tools |
+| **Phase 3** | 🔜 Next | WebSocket/SSE realtime, request-review, task completion, dependent task unlocking |
+| **Phase 4** | 🔜 Future | GitHub integration, PR tracking, branch association, richer agent integrations |
 
 ---
 
 ## Engineering Principles
 
-1. Agent-agnostic architecture
-2. Backend API owns business logic
-3. MCP is an adapter, not the business layer
+1. Agent-agnostic architecture — Bob-specific logic only in adapters
+2. Backend API owns all business logic
+3. MCP is a thin adapter, not the business layer
 4. PostgreSQL is the single source of truth
-5. File reservations are soft warnings, not hard locks
-6. Shared types from `@arxion/types` across all apps
-7. No unnecessary infrastructure for the MVP
+5. File reservations are soft warnings, never hard locks
+6. Shared types from `@arxion/types` across all apps — never redefine locally
+7. No unnecessary infrastructure for the MVP (no Redis, Kafka, queues)
 8. Strict TypeScript throughout
 
 ---
@@ -371,6 +417,4 @@ Planned future integrations:
 ## Contributing
 
 See [AGENTS.md](./AGENTS.md) for the full architectural guide for coding agents working in this repository.
-=======
-# IBMbob_ARXION_HACKATHON
->>>>>>> 0aa814e940fd5d28ed501ed2aa84e73e4c9bde5f
+See [CURRENT_HANDOFF.md](./CURRENT_HANDOFF.md) for the living development handoff with implementation details.

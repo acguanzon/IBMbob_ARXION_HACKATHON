@@ -1,0 +1,18 @@
+version: '3.9'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: arxion_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: arxion_dev
+    ports:
+      - '5432:5432'
+    volumes:
+      - arxion_pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  arxion_pgdata:

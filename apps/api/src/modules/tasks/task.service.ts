@@ -1,4 +1,5 @@
 import { prisma } from '@arxion/database';
+import type { Prisma } from '@arxion/database';
 import type {
   CreateTaskBody,
   UpdateTaskBody,
@@ -104,7 +105,7 @@ export async function claimTask(
     return { conflict: `Task ${existing.displayId} is already claimed by ${owner}.` };
   }
 
-  const task = await prisma.$transaction(async (tx) => {
+  const task = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const current = await tx.task.findUnique({
       where: { id: existing.id },
       select: { assigneeId: true, status: true },
@@ -214,9 +215,10 @@ export async function getTaskBlockers(taskId: string) {
     include: { dependsOn: true },
   });
 
+  type Dep = (typeof deps)[number];
   return deps
-    .filter((d) => d.dependsOn.status !== 'DONE')
-    .map((d) => ({
+    .filter((d: Dep) => d.dependsOn.status !== 'DONE')
+    .map((d: Dep) => ({
       blockingTaskId: d.dependsOnTaskId,
       blockingTask: d.dependsOn,
       reason: `${d.dependsOn.displayId} (${d.dependsOn.status}) must be completed first.`,

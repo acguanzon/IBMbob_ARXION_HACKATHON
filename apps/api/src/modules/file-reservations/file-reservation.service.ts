@@ -33,10 +33,11 @@ export async function reserveFiles(
     },
   });
 
-  const conflictPaths = new Set(existing.map((r) => r.filePath));
+  type ExistingRes = (typeof existing)[number];
+  const conflictPaths = new Set(existing.map((r: ExistingRes) => r.filePath));
 
   // Build conflict report
-  const conflicts: FileConflict[] = existing.map((r) => ({
+  const conflicts: FileConflict[] = existing.map((r: ExistingRes) => ({
     filePath: r.filePath,
     existingReservation: {
       id: r.id,

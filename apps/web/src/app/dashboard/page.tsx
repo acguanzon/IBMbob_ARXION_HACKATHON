@@ -17,14 +17,21 @@ export default async function DashboardPage() {
 
   const firstProject = projects[0] ?? null;
 
-  let tasks: Awaited<ReturnType<typeof api.tasks.listByProject>> = [];
-  if (firstProject) {
-    try {
-      tasks = await api.tasks.listByProject(firstProject.id);
-    } catch {
-      // tasks stay empty
-    }
-  }
+  // Fetch all panel data in parallel
+  const [tasks, sessions, reservations, activity] = await Promise.all([
+    firstProject
+      ? api.tasks.listByProject(firstProject.id).catch(() => [])
+      : Promise.resolve([]),
+    firstProject
+      ? api.agentSessions.listByProject(firstProject.id).catch(() => [])
+      : Promise.resolve([]),
+    firstProject
+      ? api.fileReservations.listActive(firstProject.id).catch(() => [])
+      : Promise.resolve([]),
+    firstProject
+      ? api.activity.listByProject(firstProject.id, 30).catch(() => [])
+      : Promise.resolve([]),
+  ]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -44,6 +51,11 @@ export default async function DashboardPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {sessions.length > 0 && (
+              <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
+                {sessions.length} agent{sessions.length !== 1 ? 's' : ''} active
+              </span>
+            )}
             <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
               API Connected
             </span>
@@ -79,8 +91,12 @@ export default async function DashboardPage() {
         </div>
       </main>
 
-      {/* Right sidebar */}
-      <ActivityPanel project={firstProject} />
+      {/* Right sidebar — Phase 2 live panels */}
+      <ActivityPanel
+        sessions={sessions}
+        reservations={reservations}
+        activity={activity}
+      />
     </div>
   );
 }
