@@ -2,6 +2,7 @@ import { api } from '@/lib/api';
 import { Sidebar } from '@/components/Sidebar';
 import { TaskBoard } from '@/components/TaskBoard';
 import { ActivityPanel } from '@/components/ActivityPanel';
+import { RealtimeProvider } from '@/components/RealtimeProvider';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,24 +18,55 @@ export default async function DashboardPage() {
 
   const firstProject = projects[0] ?? null;
 
-  // Fetch all panel data in parallel
-  const [tasks, sessions, reservations, activity] = await Promise.all([
-    firstProject
-      ? api.tasks.listByProject(firstProject.id).catch(() => [])
-      : Promise.resolve([]),
-    firstProject
-      ? api.agentSessions.listByProject(firstProject.id).catch(() => [])
-      : Promise.resolve([]),
-    firstProject
-      ? api.fileReservations.listActive(firstProject.id).catch(() => [])
-      : Promise.resolve([]),
-    firstProject
-      ? api.activity.listByProject(firstProject.id, 30).catch(() => [])
-      : Promise.resolve([]),
-  ]);
+  // Fetch tasks + per-task metadata (reservations + contract risks) in parallel
+  let tasks: Awaited<ReturnType<typeof api.tasks.listByProject>> = [];
+  let taskMeta: Record<string, { activeFiles: number; contractRisks: number }> = {};
+
+  if (firstProject) {
+    const [tasksResult, reservationsResult, risksResult] = await Promise.allSettled([
+      api.tasks.listByProject(firstProject.id),
+      api.fileReservations.listActiveByProject(firstProject.id),
+      api.coordination.getRisks(firstProject.id),
+    ]);
+
+    if (tasksResult.status === 'fulfilled') tasks = tasksResult.value;
+
+    // Build per-task active file count
+    if (reservationsResult.status === 'fulfilled') {
+      for (const r of reservationsResult.value) {
+        const tid = r.task.id;
+        const entry = (taskMeta[tid] ??= { activeFiles: 0, contractRisks: 0 });
+        entry.activeFiles += 1;
+      }
+    }
+
+    // Build per-task contract risk count
+    if (risksResult.status === 'fulfilled') {
+      for (const risk of risksResult.value) {
+        for (const tid of [risk.sourceTaskId, risk.affectedTaskId]) {
+          const entry = (taskMeta[tid] ??= { activeFiles: 0, contractRisks: 0 });
+          entry.contractRisks += 1;
+        }
+      }
+    }
+  }
+
+  // Derive active session count for the header badge
+  let activeSessionCount = 0;
+  if (firstProject) {
+    try {
+      const sessions = await api.agentSessions.listActiveByProject(firstProject.id);
+      activeSessionCount = sessions.length;
+    } catch {
+      // non-fatal
+    }
+  }
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
+      {/* Realtime WebSocket — invisible, triggers router.refresh() on events */}
+      {firstProject && <RealtimeProvider projectId={firstProject.id} />}
+
       {/* Left sidebar */}
       <Sidebar projects={projects} activeProjectId={firstProject?.id ?? null} />
 
@@ -51,9 +83,9 @@ export default async function DashboardPage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            {sessions.length > 0 && (
+            {activeSessionCount > 0 && (
               <span className="rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-medium text-blue-700">
-                {sessions.length} agent{sessions.length !== 1 ? 's' : ''} active
+                {activeSessionCount} agent{activeSessionCount !== 1 ? 's' : ''} active
               </span>
             )}
             <span className="rounded-full bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
@@ -75,7 +107,7 @@ export default async function DashboardPage() {
         {/* Task Board */}
         <div className="flex-1 overflow-auto p-6">
           {firstProject ? (
-            <TaskBoard tasks={tasks} projectId={firstProject.id} />
+            <TaskBoard tasks={tasks} projectId={firstProject.id} taskMeta={taskMeta} />
           ) : (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">
@@ -91,12 +123,8 @@ export default async function DashboardPage() {
         </div>
       </main>
 
-      {/* Right sidebar — Phase 2 live panels */}
-      <ActivityPanel
-        sessions={sessions}
-        reservations={reservations}
-        activity={activity}
-      />
+      {/* Right sidebar — ActivityPanel fetches its own data */}
+      <ActivityPanel project={firstProject} />
     </div>
   );
 }

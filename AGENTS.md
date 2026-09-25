@@ -137,26 +137,56 @@ Do not introduce:
 - Complex event sourcing
 - Microservices
 
-The realtime layer uses Socket.IO emitting events directly to connected clients.
+The realtime layer uses an in-process EventEmitter emitting domain events.
+
+---
+
+## Collaboration Rules (Phase 2)
+
+Before modifying any code, an agent MUST:
+
+1. Call `begin_task(task_id, user_id)` — runs the full coordination preflight.
+2. Review the preflight result: dependencies, active teammates, file conflicts, contract risks.
+3. Call `declare_work_intent(task_id, ...)` — declare files, APIs, and contracts you plan to modify.
+4. Call `reserve_files(task_id, ...)` — reserve the files you will edit.
+5. Read all warnings. Never assume no file overlap means no integration risk.
+
+During development:
+
+6. Call `heartbeat(session_id)` every 20-30 seconds to keep your session alive.
+7. Call `report_progress(task_id, ...)` when you complete a significant step.
+8. If your scope expands (new files, new APIs), update intent and reserve additional files.
+9. Re-check risks when changing public APIs, schemas, or shared types.
+
+When stopping:
+
+10. Call `release_files(task_id, ...)` for files you no longer need.
+11. Call `end_task_session(session_id)` — releases all reservations automatically.
+12. Never intentionally leave stale reservations.
 
 ---
 
 ## Collaboration Agent Workflow
 
-This is the intended agent workflow. Not all steps are implemented in Phase 1.
+Full Phase 2 flow:
 
 ```
 Developer claims a task on the web dashboard
       ↓
 Developer tells the coding agent: "Work on T-102"
       ↓
-Agent calls:  get_task("T-102")
+Agent calls:  begin_task("T-102", userId)
       ↓
-Platform returns: title, description, status, assignee, dependencies, team activity
+Platform returns: coordination preflight
+  - task details + assignee
+  - dependency status
+  - active teammates
+  - file conflicts
+  - contract risks
+  - coordination status: READY | READY_WITH_WARNINGS | BLOCKED
+  - session ID
       ↓
-Agent calls:  get_task_dependencies("T-102")
-      ↓
-Agent determines which files it will modify
+Agent calls:  declare_work_intent(...)
       ↓
 Agent calls:  reserve_files(...)
       ↓
@@ -167,17 +197,21 @@ If clear:    reservation is created
       ↓
 Agent works on the task
       ↓
+Agent calls:  heartbeat(sessionId) every 20-30s
+      ↓
 Agent calls:  report_progress(...)
       ↓
 Agent runs tests
       ↓
-Agent calls:  request_review(...)
+Agent calls:  release_files(...)
+      ↓
+Agent calls:  end_task_session(sessionId)
+      ↓
+(Phase 3) Agent calls:  request_review(...)
       ↓
 Human reviews the work
       ↓
-Agent calls:  release_files(...)
-      ↓
-Agent calls:  complete_task(...)
+(Phase 3) Agent calls:  complete_task(...)
       ↓
 Dependent tasks are unblocked
 ```
@@ -186,20 +220,25 @@ Dependent tasks are unblocked
 
 ## MCP Tools
 
-Available in Phase 1:
+Available in Phase 2:
 
 | Tool | Status | Description |
 |------|--------|-------------|
-| `get_task` | ✅ Implemented | Retrieve task details and context |
-| `get_project_context` | ✅ Implemented | Retrieve project info and members |
-| `get_task_dependencies` | ✅ Implemented | Get dependency list for a task |
-| `claim_task` | 🔜 Phase 2 | Claim a task for yourself |
-| `start_task` | 🔜 Phase 2 | Start an agent session and begin work |
-| `get_team_activity` | 🔜 Phase 2 | Get recent project activity |
-| `get_active_file_reservations` | 🔜 Phase 2 | See active file reservations |
-| `reserve_files` | 🔜 Phase 2 | Reserve files for modification |
-| `release_files` | 🔜 Phase 2 | Release file reservations |
-| `report_progress` | 🔜 Phase 2 | Report progress on a task |
+| `get_task` | ✅ Phase 1 | Retrieve task details and context |
+| `get_project_context` | ✅ Phase 1 | Retrieve project info and members |
+| `get_task_dependencies` | ✅ Phase 1 | Get dependency list for a task |
+| `get_task_blockers` | ✅ Phase 2 | Get unfinished (blocking) dependencies |
+| `claim_task` | ✅ Phase 2 | Claim a task atomically |
+| `begin_task` | ✅ Phase 2 | Full coordination preflight — always call first |
+| `declare_work_intent` | ✅ Phase 2 | Declare files/APIs/contracts you plan to modify |
+| `reserve_files` | ✅ Phase 2 | Reserve files for modification |
+| `release_files` | ✅ Phase 2 | Release file reservations |
+| `get_active_file_reservations` | ✅ Phase 2 | See active file reservations |
+| `report_progress` | ✅ Phase 2 | Report progress on a task |
+| `heartbeat` | ✅ Phase 2 | Keep your agent session alive |
+| `end_task_session` | ✅ Phase 2 | End session and release all files |
+| `get_team_activity` | ✅ Phase 2 | Get recent project activity |
+| `get_coordination_risks` | ✅ Phase 2 | Get active contract risks across the project |
 | `request_review` | 🔜 Phase 3 | Request human review |
 | `complete_task` | 🔜 Phase 3 | Mark task as completed |
 

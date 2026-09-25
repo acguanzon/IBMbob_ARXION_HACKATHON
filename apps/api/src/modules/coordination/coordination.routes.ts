@@ -7,6 +7,7 @@ import {
   declareContract,
   getContracts,
   getContractRisks,
+  getCoordinationRisks,
 } from './coordination.service.js';
 
 export async function coordinationRoutes(app: FastifyInstance): Promise<void> {
@@ -68,4 +69,14 @@ export async function coordinationRoutes(app: FastifyInstance): Promise<void> {
     const risks = await getContractRisks(taskId);
     await reply.status(200).send({ success: true, data: risks });
   });
+
+  // GET /projects/:projectId/coordination/risks — project-wide risk scan (used by dashboard)
+  app.get(
+    '/projects/:projectId/coordination/risks',
+    async (req: FastifyRequest, reply: FastifyReply) => {
+      const { projectId } = req.params as { projectId: string };
+      const risks = await getCoordinationRisks(projectId);
+      await reply.status(200).send({ success: true, data: risks });
+    },
+  );
 }

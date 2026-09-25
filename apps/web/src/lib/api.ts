@@ -29,8 +29,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
 export const api = {
   projects: {
     list: () => apiFetch<import('@arxion/types').ProjectWithMembers[]>('/projects'),
-    get: (id: string) =>
-      apiFetch<import('@arxion/types').ProjectWithMembers>(`/projects/${id}`),
+    get: (id: string) => apiFetch<import('@arxion/types').ProjectWithMembers>(`/projects/${id}`),
   },
   tasks: {
     listByProject: (projectId: string) =>
@@ -38,21 +37,25 @@ export const api = {
     get: (taskId: string) =>
       apiFetch<import('@arxion/types').TaskWithRelations>(`/tasks/${taskId}`),
   },
-  agentSessions: {
-    listByProject: (projectId: string) =>
-      apiFetch<AgentSessionWithRelations[]>(`/projects/${projectId}/agent-sessions`),
-  },
-  fileReservations: {
-    listActive: (projectId: string) =>
-      apiFetch<FileReservationWithRelations[]>(`/projects/${projectId}/files/active`),
-  },
   activity: {
     listByProject: (projectId: string, limit = 30) =>
       apiFetch<ActivityItemWithRelations[]>(`/projects/${projectId}/activity?limit=${limit}`),
   },
+  agentSessions: {
+    listActiveByProject: (projectId: string) =>
+      apiFetch<AgentSessionWithRelations[]>(`/projects/${projectId}/agent-sessions`),
+  },
+  fileReservations: {
+    listActiveByProject: (projectId: string) =>
+      apiFetch<FileReservationWithRelations[]>(`/projects/${projectId}/files/active`),
+  },
+  coordination: {
+    getRisks: (projectId: string) =>
+      apiFetch<CoordinationRisk[]>(`/projects/${projectId}/coordination/risks`),
+  },
 };
 
-// ── Inline types for Phase 2 API responses ────────────────────────────────────
+// ── API response types ────────────────────────────────────────────────────────
 
 export interface AgentSessionWithRelations {
   id: string;
@@ -85,4 +88,15 @@ export interface ActivityItemWithRelations {
   user: { id: string; name: string } | null;
   task: { id: string; displayId: string; title: string } | null;
   agentSession: { id: string; agentType: string; status: string } | null;
+}
+
+export interface CoordinationRisk {
+  contractName: string;
+  contractType: string;
+  sourceTaskId: string;
+  sourceTaskDisplayId: string;
+  sourceRelationship: string;
+  affectedTaskId: string;
+  affectedTaskDisplayId: string;
+  affectedRelationship: string;
 }

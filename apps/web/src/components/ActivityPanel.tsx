@@ -2,16 +2,84 @@ import type {
   AgentSessionWithRelations,
   FileReservationWithRelations,
   ActivityItemWithRelations,
+  CoordinationRisk,
 } from '@/lib/api';
+import { api } from '@/lib/api';
+import type { ProjectWithMembers } from '@arxion/types';
 
 interface ActivityPanelProps {
-  sessions: AgentSessionWithRelations[];
-  reservations: FileReservationWithRelations[];
-  activity: ActivityItemWithRelations[];
+  project: ProjectWithMembers | null;
 }
 
-export function ActivityPanel({ sessions, reservations, activity }: ActivityPanelProps) {
-  const conflicts = reservations.filter((r) => r.status === 'CONFLICT');
+const AGENT_TYPE_LABELS: Record<string, string> = {
+  IBM_BOB: 'IBM Bob',
+  CURSOR: 'Cursor',
+  CLAUDE_CODE: 'Claude Code',
+  OTHER: 'Agent',
+};
+
+const STATUS_COLORS: Record<string, string> = {
+  WORKING: 'bg-emerald-100 text-emerald-700',
+  WAITING: 'bg-amber-100 text-amber-700',
+  IDLE: 'bg-slate-100 text-slate-600',
+  STALE: 'bg-red-100 text-red-600',
+};
+
+const EVENT_ICONS: Record<string, string> = {
+  'task.created': '📋',
+  'task.claimed': '🙋',
+  'task.released': '↩️',
+  'task.started': '▶️',
+  'task.progress': '⚡',
+  'task.updated': '✏️',
+  'agent.started': '🤖',
+  'agent.ended': '⏹️',
+  'agent.stale': '⚠️',
+  'agent.heartbeat': '💓',
+  'file.reserved': '📌',
+  'file.released': '📍',
+  'file.conflict': '⚠️',
+  'file.expired': '⏰',
+  'contract.declared': '📝',
+  'contract.risk_detected': '🚨',
+};
+
+function relativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diffMs / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  return `${h}h ago`;
+}
+
+export async function ActivityPanel({ project }: ActivityPanelProps) {
+  if (!project) {
+    return (
+      <aside className="flex w-72 flex-col border-l border-slate-200 bg-white overflow-y-auto shrink-0">
+        <div className="p-4 text-xs text-slate-400">No project selected</div>
+      </aside>
+    );
+  }
+
+  // Fetch all live data in parallel
+  const [activitiesResult, sessionsResult, reservationsResult, risksResult] =
+    await Promise.allSettled([
+      api.activity.listByProject(project.id, 25),
+      api.agentSessions.listActiveByProject(project.id),
+      api.fileReservations.listActiveByProject(project.id),
+      api.coordination.getRisks(project.id),
+    ]);
+
+  const activityItems: ActivityItemWithRelations[] =
+    activitiesResult.status === 'fulfilled' ? activitiesResult.value : [];
+  const sessionItems: AgentSessionWithRelations[] =
+    sessionsResult.status === 'fulfilled' ? sessionsResult.value : [];
+  const reservationItems: FileReservationWithRelations[] =
+    reservationsResult.status === 'fulfilled' ? reservationsResult.value : [];
+  const riskItems: CoordinationRisk[] =
+    risksResult.status === 'fulfilled' ? risksResult.value : [];
 
   return (
     <aside className="flex w-72 flex-col border-l border-slate-200 bg-white overflow-y-auto shrink-0">
@@ -20,36 +88,34 @@ export function ActivityPanel({ sessions, reservations, activity }: ActivityPane
       <section className="border-b border-slate-200 p-4">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
           Active Agents
-          {sessions.length > 0 && (
-            <span className="ml-2 rounded-full bg-emerald-100 px-1.5 py-0.5 text-emerald-700">
-              {sessions.length}
+          {sessionItems.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-emerald-100 px-1.5 py-0.5 text-emerald-700">
+              {sessionItems.length}
             </span>
           )}
         </p>
-        {sessions.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-200 p-3 text-center">
-            <p className="text-xs text-slate-400">No active agent sessions</p>
-          </div>
-        ) : (
-          <ul className="space-y-2">
-            {sessions.map((s) => (
-              <li key={s.id} className="flex items-start gap-2">
-                <span className={`mt-0.5 h-2 w-2 shrink-0 rounded-full ${statusColor(s.status)}`} />
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-slate-700">
-                    {s.user.name}
-                    <span className="ml-1 text-slate-400">({s.agentType.replace('_', ' ')})</span>
-                  </p>
-                  {s.task && (
-                    <p className="text-xs text-slate-400 truncate">
-                      {s.task.displayId} — {s.task.title}
-                    </p>
-                  )}
-                  <p className="text-xs text-slate-300">{s.status}</p>
+        {sessionItems.length > 0 ? (
+          <ul className="space-y-2.5">
+            {sessionItems.map((s) => (
+              <li key={s.id} className="rounded-md border border-slate-100 bg-slate-50 p-2.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-semibold text-slate-800">{s.user.name}</span>
+                  <span className={`rounded-full px-1.5 py-0.5 text-xs font-medium ${STATUS_COLORS[s.status] ?? 'bg-slate-100 text-slate-600'}`}>
+                    {s.status}
+                  </span>
                 </div>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {AGENT_TYPE_LABELS[s.agentType] ?? s.agentType}
+                  {s.task ? ` · ${s.task.displayId}` : ''}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-400">{relativeTime(s.lastSeenAt)}</p>
               </li>
             ))}
           </ul>
+        ) : (
+          <div className="rounded-lg border border-dashed border-slate-200 p-3 text-center">
+            <p className="text-xs text-slate-400">No active agent sessions</p>
+          </div>
         )}
       </section>
 
@@ -57,127 +123,103 @@ export function ActivityPanel({ sessions, reservations, activity }: ActivityPane
       <section className="border-b border-slate-200 p-4">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
           File Reservations
-          {reservations.length > 0 && (
-            <span className="ml-2 rounded-full bg-blue-100 px-1.5 py-0.5 text-blue-700">
-              {reservations.length}
+          {reservationItems.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-blue-100 px-1.5 py-0.5 text-blue-700">
+              {reservationItems.length}
             </span>
           )}
         </p>
-        {reservations.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-slate-200 p-3 text-center">
-            <p className="text-xs text-slate-400">No active reservations</p>
-          </div>
-        ) : (
+        {reservationItems.length > 0 ? (
           <ul className="space-y-2">
-            {reservations.map((r) => (
-              <li key={r.id} className="flex items-start gap-1.5">
-                <span className="mt-0.5 shrink-0 text-sm">{r.status === 'CONFLICT' ? '⚡' : '📄'}</span>
-                <div className="min-w-0">
-                  <p className="truncate text-xs font-medium text-slate-700">{r.filePath}</p>
+            {reservationItems.map((r) => (
+              <li
+                key={r.id}
+                className={`rounded border p-2 ${r.status === 'CONFLICT' ? 'border-amber-200 bg-amber-50' : 'border-slate-100 bg-slate-50'}`}
+              >
+                <p className="truncate text-xs font-mono font-medium text-slate-700" title={r.filePath}>
+                  {r.status === 'CONFLICT' ? '⚠ ' : '📌 '}
+                  {r.filePath.split('/').pop() ?? r.filePath}
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  {r.user.name} · {r.task.displayId}
+                </p>
+                {r.leaseExpiresAt && (
                   <p className="text-xs text-slate-400">
-                    {r.user.name} · {r.task.displayId}
+                    expires {new Date(r.leaseExpiresAt).toLocaleTimeString()}
                   </p>
-                  {r.leaseExpiresAt && (
-                    <p className="text-xs text-slate-300">
-                      expires {new Date(r.leaseExpiresAt).toLocaleTimeString()}
-                    </p>
-                  )}
-                </div>
+                )}
               </li>
             ))}
           </ul>
+        ) : (
+          <div className="rounded-lg border border-dashed border-slate-200 p-3 text-center">
+            <p className="text-xs text-slate-400">No active reservations</p>
+          </div>
         )}
       </section>
 
-      {/* Conflicts */}
-      {conflicts.length > 0 && (
-        <section className="border-b border-slate-200 p-4">
-          <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-red-400">
-            ⚡ Conflicts ({conflicts.length})
-          </p>
+      {/* Coordination Risks */}
+      <section className="border-b border-slate-200 p-4">
+        <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
+          Coordination Risks
+          {riskItems.length > 0 && (
+            <span className="ml-1.5 rounded-full bg-red-100 px-1.5 py-0.5 text-red-700">
+              {riskItems.length}
+            </span>
+          )}
+        </p>
+        {riskItems.length > 0 ? (
           <ul className="space-y-2">
-            {conflicts.map((c) => (
-              <li key={c.id} className="rounded-md bg-red-50 p-2 text-xs text-red-700">
-                <p className="font-medium truncate">{c.filePath}</p>
-                <p className="text-red-500">
-                  {c.user.name} on {c.task.displayId}
+            {riskItems.map((r, i) => (
+              <li key={i} className="rounded border border-red-200 bg-red-50 p-2">
+                <p className="text-xs font-semibold text-red-800">
+                  🚨 {r.contractType}: {r.contractName}
+                </p>
+                <p className="mt-0.5 text-xs text-red-600">
+                  {r.sourceTaskDisplayId} {r.sourceRelationship.toLowerCase()}s it
+                </p>
+                <p className="text-xs text-red-600">
+                  {r.affectedTaskDisplayId} consumes it
                 </p>
               </li>
             ))}
           </ul>
-        </section>
-      )}
+        ) : (
+          <div className="rounded-lg border border-dashed border-slate-200 p-3 text-center">
+            <p className="text-xs text-slate-400">No conflicts detected</p>
+          </div>
+        )}
+      </section>
 
-      {/* Recent Activity */}
+      {/* Activity Feed */}
       <section className="p-4">
         <p className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-400">
           Recent Activity
         </p>
-        {activity.length === 0 ? (
-          <p className="text-xs text-slate-400">No recent activity</p>
-        ) : (
+        {activityItems.length > 0 ? (
           <ul className="space-y-2.5">
-            {activity.map((a) => (
-              <ActivityItem key={a.id} item={a} />
-            ))}
+            {activityItems.map((a) => {
+              const icon = EVENT_ICONS[a.type] ?? '●';
+              return (
+                <li key={a.id} className="flex items-start gap-2">
+                  <span className="mt-0.5 shrink-0 text-sm">{icon}</span>
+                  <div className="min-w-0">
+                    <p className="text-xs text-slate-700 leading-snug">{a.message}</p>
+                    <p className="text-xs text-slate-400">
+                      {a.user?.name ?? 'System'}
+                      {a.task ? ` · ${a.task.displayId}` : ''}
+                      {' · '}
+                      {relativeTime(a.createdAt)}
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
+        ) : (
+          <div className="text-xs text-slate-400">No recent activity</div>
         )}
       </section>
     </aside>
   );
-}
-
-function ActivityItem({ item }: { item: ActivityItemWithRelations }) {
-  const icon = activityIcon(item.type);
-  const who = item.user?.name ?? 'System';
-  const where = item.task ? ` · ${item.task.displayId}` : '';
-  const when = timeAgo(item.createdAt);
-
-  return (
-    <li className="flex items-start gap-2">
-      <span className="mt-0.5 shrink-0 text-sm">{icon}</span>
-      <div className="min-w-0">
-        <p className="text-xs font-medium text-slate-700 truncate">{item.message}</p>
-        <p className="text-xs text-slate-400">
-          {who}{where} · {when}
-        </p>
-      </div>
-    </li>
-  );
-}
-
-function statusColor(status: string): string {
-  switch (status) {
-    case 'WORKING': return 'bg-emerald-400';
-    case 'WAITING': return 'bg-yellow-400';
-    case 'IDLE':    return 'bg-slate-300';
-    case 'STALE':   return 'bg-orange-400';
-    default:        return 'bg-slate-200';
-  }
-}
-
-function activityIcon(type: string): string {
-  if (type.startsWith('task.claim')) return '🎯';
-  if (type.startsWith('task.progress')) return '📝';
-  if (type.startsWith('task.created')) return '✅';
-  if (type.startsWith('task.released')) return '🔓';
-  if (type.startsWith('file.reserved')) return '📄';
-  if (type.startsWith('file.released')) return '🔓';
-  if (type.startsWith('file.conflict')) return '⚡';
-  if (type.startsWith('agent.started')) return '🤖';
-  if (type.startsWith('agent.ended')) return '👋';
-  if (type.startsWith('agent.stale')) return '⚠️';
-  if (type.startsWith('contract')) return '📋';
-  return '•';
-}
-
-function timeAgo(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime();
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
 }

@@ -3,6 +3,8 @@ import type { TaskWithRelations, TaskStatus } from '@arxion/types';
 interface TaskBoardProps {
   tasks: TaskWithRelations[];
   projectId: string;
+  // Per-task metadata derived from reservations and contracts
+  taskMeta?: Record<string, { activeFiles: number; contractRisks: number }>;
 }
 
 const COLUMNS: { status: TaskStatus; label: string; color: string }[] = [
@@ -20,7 +22,7 @@ const PRIORITY_BADGE: Record<string, string> = {
   CRITICAL: 'bg-red-100 text-red-600',
 };
 
-export function TaskBoard({ tasks }: TaskBoardProps) {
+export function TaskBoard({ tasks, taskMeta = {} }: TaskBoardProps) {
   const tasksByStatus = Object.fromEntries(
     COLUMNS.map((col) => [col.status, tasks.filter((t) => t.status === col.status)]),
   ) as Record<TaskStatus, TaskWithRelations[]>;
@@ -45,7 +47,7 @@ export function TaskBoard({ tasks }: TaskBoardProps) {
             {/* Cards */}
             <div className="flex flex-1 flex-col gap-2 overflow-y-auto p-2">
               {colTasks.map((task) => (
-                <TaskCard key={task.id} task={task} />
+                <TaskCard key={task.id} task={task} meta={taskMeta[task.id]} />
               ))}
               {colTasks.length === 0 && (
                 <div className="py-6 text-center text-xs text-slate-300">Empty</div>
@@ -58,10 +60,13 @@ export function TaskBoard({ tasks }: TaskBoardProps) {
   );
 }
 
-function TaskCard({ task }: { task: TaskWithRelations }) {
-  const hasBlockedDeps = task.dependencies.some(
-    (d) => d.dependsOn.status !== 'DONE',
-  );
+interface TaskCardMeta {
+  activeFiles: number;
+  contractRisks: number;
+}
+
+function TaskCard({ task, meta }: { task: TaskWithRelations; meta?: TaskCardMeta }) {
+  const hasBlockedDeps = task.dependencies.some((d) => d.dependsOn.status !== 'DONE');
 
   return (
     <div className="group rounded-lg border border-slate-200 bg-white p-3 shadow-sm hover:border-blue-300 hover:shadow-md transition-all">
@@ -82,6 +87,22 @@ function TaskCard({ task }: { task: TaskWithRelations }) {
       {task.description && (
         <p className="mt-1 line-clamp-2 text-xs text-slate-500">{task.description}</p>
       )}
+
+      {/* Agent metadata row */}
+      {(meta?.activeFiles || meta?.contractRisks) ? (
+        <div className="mt-2 flex items-center gap-2">
+          {meta.activeFiles > 0 && (
+            <span className="inline-flex items-center gap-0.5 rounded bg-blue-50 px-1.5 py-0.5 text-xs text-blue-600">
+              📌 {meta.activeFiles} {meta.activeFiles === 1 ? 'file' : 'files'}
+            </span>
+          )}
+          {meta.contractRisks > 0 && (
+            <span className="inline-flex items-center gap-0.5 rounded bg-red-50 px-1.5 py-0.5 text-xs text-red-600">
+              🚨 {meta.contractRisks} {meta.contractRisks === 1 ? 'risk' : 'risks'}
+            </span>
+          )}
+        </div>
+      ) : null}
 
       {/* Footer */}
       <div className="mt-2 flex items-center justify-between">
@@ -108,7 +129,7 @@ function TaskCard({ task }: { task: TaskWithRelations }) {
         )}
 
         {/* Dependency count */}
-        {task.dependencies.length > 0 && (
+        {task.dependencies.length > 0 && !hasBlockedDeps && (
           <span className="text-xs text-slate-400">
             {task.dependencies.length} dep{task.dependencies.length > 1 ? 's' : ''}
           </span>

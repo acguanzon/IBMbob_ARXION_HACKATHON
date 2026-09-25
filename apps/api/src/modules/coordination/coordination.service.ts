@@ -10,6 +10,7 @@ import { normalizePaths } from '../../lib/normalize-path.js';
 import { emitEvent } from '../../lib/realtime.js';
 
 const DEFAULT_LEASE_SECONDS = 120;
+void DEFAULT_LEASE_SECONDS; // reserved for future use
 
 /**
  * Core "begin_task" preflight:
@@ -314,7 +315,6 @@ export async function detectContractRisks(
   taskId: string,
   projectId: string,
 ): Promise<ContractRisk[]> {
-  // Get this task's contracts
   const thisContracts = await prisma.taskContract.findMany({
     where: { taskId },
     include: { task: true },
@@ -325,7 +325,6 @@ export async function detectContractRisks(
   type ContractRow = (typeof thisContracts)[number];
   const contractNames = thisContracts.map((c: ContractRow) => c.name);
 
-  // Find all other contracts in the project with the same names
   const otherContracts = await prisma.taskContract.findMany({
     where: {
       projectId,
@@ -341,10 +340,6 @@ export async function detectContractRisks(
     for (const other of otherContracts) {
       if (mine.name !== other.name) continue;
 
-      // Risk patterns:
-      // 1. I CONSUME something another task MODIFIES → they may break my contract
-      // 2. I MODIFY something another task CONSUMES → I may break their contract
-      // 3. Two tasks both MODIFY the same contract → merge conflict risk
       const isRisk =
         (mine.relationship === 'CONSUMES' && other.relationship === 'MODIFIES') ||
         (mine.relationship === 'MODIFIES' && other.relationship === 'CONSUMES') ||
@@ -378,4 +373,42 @@ export async function getContractRisks(taskId: string): Promise<ContractRisk[]> 
   if (!task) throw Object.assign(new Error(`Task not found: ${taskId}`), { statusCode: 404 });
 
   return detectContractRisks(task.id, task.projectId);
+}
+
+/**
+ * Get all contract risks for a project (used by the dashboard panel).
+ * Scans all tasks in the project for MODIFIES/PROVIDES vs CONSUMES conflicts.
+ */
+export async function getCoordinationRisks(projectId: string): Promise<ContractRisk[]> {
+  const allContracts = await prisma.taskContract.findMany({
+    where: { projectId },
+    include: { task: true },
+  });
+
+  const modifying = allContracts.filter(
+    (c) => c.relationship === 'MODIFIES' || c.relationship === 'PROVIDES',
+  );
+  const consuming = allContracts.filter((c) => c.relationship === 'CONSUMES');
+
+  const risks: ContractRisk[] = [];
+
+  for (const mod of modifying) {
+    for (const con of consuming) {
+      if (mod.taskId === con.taskId) continue;
+      if (mod.name.toLowerCase() !== con.name.toLowerCase()) continue;
+
+      risks.push({
+        contractName: mod.name,
+        contractType: mod.type,
+        sourceTaskId: mod.taskId,
+        sourceTaskDisplayId: mod.task.displayId,
+        sourceRelationship: mod.relationship,
+        affectedTaskId: con.taskId,
+        affectedTaskDisplayId: con.task.displayId,
+        affectedRelationship: con.relationship,
+      });
+    }
+  }
+
+  return risks;
 }

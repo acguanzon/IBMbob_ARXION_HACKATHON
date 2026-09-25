@@ -276,7 +276,7 @@ model TaskContract {
 /// Enables pre-code conflict detection.
 model TaskWorkIntent {
   id          String   @id @default(cuid())
-  taskId      String
+  taskId      String   @unique
   files       String[] // normalized file paths
   apis        String[]
   models      String[]

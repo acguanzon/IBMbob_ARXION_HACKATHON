@@ -50,11 +50,27 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+async function apiPatch<T>(path: string, body: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(API_KEY ? { 'x-internal-api-key': API_KEY } : {}),
+    },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`API ${response.status} ${response.statusText} — ${text}`);
+  }
+  return response.json() as Promise<T>;
+}
+
 // ── MCP Server ────────────────────────────────────────────────────────────────
 
 const server = new McpServer({
   name: 'arxion-mcp-server',
-  version: '0.2.0',
+  version: '0.3.0',
 });
 
 // ── Tool: get_task ────────────────────────────────────────────────────────────
@@ -227,6 +243,42 @@ server.registerTool(
   },
 );
 
+// ── Tool: get_task_blockers ───────────────────────────────────────────────────
+
+server.registerTool(
+  'get_task_blockers',
+  {
+    description: `Return only the unfinished (blocking) dependencies for a task.
+Use this to know whether a task is actively blocked before starting.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('The task ID (display ID like T-102 or internal cuid)'),
+    }),
+  },
+  async ({ task_id }) => {
+    try {
+      const response = await apiGet<{
+        success: boolean;
+        data: Array<{ blockingTask: { displayId: string; title: string; status: string }; reason: string }>;
+      }>(`/tasks/${encodeURIComponent(task_id)}/blockers`);
+
+      if (!response.data || response.data.length === 0) {
+        return { content: [{ type: 'text', text: `No active blockers for task ${task_id}. All dependencies are complete.` }] };
+      }
+
+      const lines = response.data
+        .map((b) => `  ⚠ ${b.blockingTask.displayId} [${b.blockingTask.status}]: ${b.reason}`)
+        .join('\n');
+
+      return { content: [{ type: 'text', text: `BLOCKERS for ${task_id}:\n${lines}` }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to retrieve blockers for ${task_id}: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ── Tool: claim_task ──────────────────────────────────────────────────────────
 
 server.registerTool(
@@ -380,6 +432,52 @@ ${d.coordinationStatus === 'READY' ? '✅ All clear — safe to proceed.' : ''}`
   },
 );
 
+// ── Tool: declare_work_intent ─────────────────────────────────────────────────
+
+server.registerTool(
+  'declare_work_intent',
+  {
+    description: `Declare what files, APIs, models, and contracts you plan to work on before writing any code.
+This enables conflict detection and makes your plan visible to teammates.
+Call this after begin_task and before reserve_files.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('The task ID (e.g. T-102)'),
+      files: z.array(z.string()).optional().default([]).describe('File paths you plan to modify'),
+      apis: z.array(z.string()).optional().default([]).describe('API endpoints you plan to modify (e.g. ["POST /api/login"])'),
+      models: z.array(z.string()).optional().default([]).describe('Data models you plan to modify (e.g. ["User"])'),
+      contracts: z.array(z.string()).optional().default([]).describe('Contracts you intend to provide or change'),
+      summary: z.string().optional().describe('Short summary of what you plan to implement'),
+    }),
+  },
+  async ({ task_id, files, apis, models, contracts, summary }) => {
+    try {
+      const response = await apiPost<{ success: boolean; data: { files: string[]; apis: string[]; models: string[] }; error?: { message: string } }>(
+        `/tasks/${encodeURIComponent(task_id)}/work-intent`,
+        { files, apis, models, contracts, summary },
+      );
+
+      if (!response.success) {
+        return { content: [{ type: 'text', text: `Failed to declare intent: ${response.error?.message}` }], isError: true };
+      }
+
+      const lines = [
+        files.length > 0 ? `Files:     ${files.join(', ')}` : null,
+        apis.length > 0 ? `APIs:      ${apis.join(', ')}` : null,
+        models.length > 0 ? `Models:    ${models.join(', ')}` : null,
+        contracts.length > 0 ? `Contracts: ${contracts.join(', ')}` : null,
+        summary ? `Summary:   ${summary}` : null,
+      ].filter(Boolean).join('\n');
+
+      return { content: [{ type: 'text', text: `✅ Work intent declared for ${task_id}:\n${lines}\n\nNext: call reserve_files to claim ownership of the files you will edit.` }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to declare work intent: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ── Tool: reserve_files ───────────────────────────────────────────────────────
 
 server.registerTool(
@@ -519,6 +617,32 @@ Use this to keep teammates informed of what you are doing.`,
   },
 );
 
+// ── Tool: heartbeat ───────────────────────────────────────────────────────────
+
+server.registerTool(
+  'heartbeat',
+  {
+    description: `Send a heartbeat for your agent session to prevent it from being marked as stale.
+Call this every 20–30 seconds while actively working. Also extends file reservation leases.`,
+    inputSchema: z.object({
+      session_id: z.string().describe('Your agent session ID from begin_task'),
+    }),
+  },
+  async ({ session_id }) => {
+    try {
+      await apiPost(`/agent-sessions/${encodeURIComponent(session_id)}/heartbeat`, {});
+      return {
+        content: [{ type: 'text', text: `💓 Heartbeat sent for session ${session_id}. File leases extended.` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Heartbeat failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ── Tool: get_team_activity ───────────────────────────────────────────────────
 
 server.registerTool(
@@ -620,6 +744,54 @@ Use this to see which files teammates are working on before making changes.`,
   },
 );
 
+// ── Tool: get_coordination_risks ──────────────────────────────────────────────
+
+server.registerTool(
+  'get_coordination_risks',
+  {
+    description: `Get all active contract risks for a project — cases where one task modifies a contract that another task consumes.
+Use this to understand cross-task integration risks before they become Git conflicts.`,
+    inputSchema: z.object({
+      project_id: z.string().describe('The project ID'),
+    }),
+  },
+  async ({ project_id }) => {
+    try {
+      const response = await apiGet<{
+        success: boolean;
+        data: Array<{
+          contractName: string;
+          contractType: string;
+          sourceTaskDisplayId: string;
+          sourceRelationship: string;
+          affectedTaskDisplayId: string;
+          affectedRelationship: string;
+        }>;
+      }>(`/projects/${encodeURIComponent(project_id)}/coordination/risks`);
+
+      if (!response.data || response.data.length === 0) {
+        return { content: [{ type: 'text', text: '✅ No active coordination risks detected.' }] };
+      }
+
+      const lines = response.data
+        .map(
+          (r) =>
+            `⚠ CONTRACT RISK: ${r.contractType} "${r.contractName}"\n` +
+            `   ${r.sourceTaskDisplayId} ${r.sourceRelationship}s it\n` +
+            `   ${r.affectedTaskDisplayId} ${r.affectedRelationship}s it`,
+        )
+        .join('\n\n');
+
+      return { content: [{ type: 'text', text: `COORDINATION RISKS:\n\n${lines}` }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get coordination risks: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ── Tool: end_session ─────────────────────────────────────────────────────────
 
 server.registerTool(
@@ -652,7 +824,7 @@ Always call this when you finish working on a task.`,
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Arxion MCP Server v0.2.0 running on stdio');
+  console.error('Arxion MCP Server v0.3.0 running on stdio');
   console.error(`Backend API: ${API_BASE_URL}`);
 }
 
