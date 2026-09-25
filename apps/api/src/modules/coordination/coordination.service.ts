@@ -180,6 +180,43 @@ export async function beginTask(
       ? 'READY_WITH_WARNINGS'
       : 'READY';
 
+  // Phase 4: Fetch unread context updates for this task
+  const contextUpdates = await prisma.contextUpdate.findMany({
+    where: { affectedTaskId: task.id, status: { in: ['UNREAD', 'READ'] } },
+    include: {
+      sourceTask: { select: { displayId: true, title: true } },
+      entity: { select: { name: true, type: true } },
+    },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+  });
+
+  // Phase 4: Fetch open coordination risks affecting this task
+  const activeRisks = await prisma.coordinationRisk.findMany({
+    where: { affectedTaskId: task.id, status: 'OPEN' },
+    include: {
+      sourceTask: { select: { displayId: true, title: true } },
+      sourceEntity: { select: { name: true, type: true } },
+    },
+    orderBy: [{ severity: 'desc' }, { detectedAt: 'desc' }],
+    take: 10,
+  });
+
+  // Phase 4: Fetch branch/git status for this task
+  const gitLink = await prisma.taskGitLink.findFirst({
+    where: { taskId: task.id },
+    orderBy: { updatedAt: 'desc' },
+  });
+
+  const hasUnreadUpdates = contextUpdates.length > 0;
+  const hasOpenRisks = activeRisks.length > 0;
+
+  // Upgrade coordination status if there are phase-4 risks
+  let finalCoordinationStatus: 'READY' | 'READY_WITH_WARNINGS' | 'BLOCKED' = coordinationStatus;
+  if (coordinationStatus === 'READY' && (hasUnreadUpdates || hasOpenRisks)) {
+    finalCoordinationStatus = 'READY_WITH_WARNINGS';
+  }
+
   return {
     task: freshTask! as typeof freshTask & { assignee: NonNullable<typeof freshTask>['assignee'] },
     sessionId: session.id,
@@ -187,7 +224,20 @@ export async function beginTask(
     activeTeammates,
     fileConflicts,
     contractRisks,
-    coordinationStatus,
+    coordinationStatus: finalCoordinationStatus,
+    // Phase 4 additions
+    contextUpdates,
+    activeRisks,
+    gitLink: gitLink
+      ? {
+          branchName: gitLink.branchName,
+          baseBranch: gitLink.baseBranch,
+          latestCommitSha: gitLink.latestCommitSha,
+          aheadCount: gitLink.aheadCount,
+          behindCount: gitLink.behindCount,
+          mergeStatus: gitLink.mergeStatus,
+        }
+      : null,
   };
 }
 

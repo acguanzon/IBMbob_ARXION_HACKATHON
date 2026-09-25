@@ -70,7 +70,7 @@ async function apiPatch<T>(path: string, body: unknown): Promise<T> {
 
 const server = new McpServer({
   name: 'arxion-mcp-server',
-  version: '0.3.0',
+  version: '0.4.0',
 });
 
 // ── Tool: get_task ────────────────────────────────────────────────────────────
@@ -363,6 +363,10 @@ Always call this before reserving files or declaring contracts.`,
           activeTeammates: Array<{ userName: string; taskDisplayId: string; agentType: string; status: string }>;
           fileConflicts: Array<{ filePath: string; existingReservation: { userName: string; taskDisplayId: string } }>;
           contractRisks: Array<{ contractName: string; contractType: string; affectedTaskDisplayId: string; affectedRelationship: string }>;
+          // Phase 4
+          contextUpdates?: Array<{ id: string; type: string; title: string; message: string; status: string; sourceTask: { displayId: string } | null }>;
+          activeRisks?: Array<{ id: string; type: string; severity: string; title: string; description: string; sourceTask: { displayId: string } | null }>;
+          gitLink?: { branchName: string | null; baseBranch: string | null; latestCommitSha: string | null; aheadCount: number | null; behindCount: number | null } | null;
         };
         error?: { code: string; message: string };
       }>('/coordination/begin', {
@@ -398,6 +402,19 @@ Always call this before reserving files or declaring contracts.`,
         ? d.contractRisks.map((r) => `  ⚠️  ${r.contractType} "${r.contractName}" — ${r.affectedTaskDisplayId} ${r.affectedRelationship}s it`).join('\n')
         : '  (none)';
 
+      // Phase 4 sections
+      const contextUpdateLines = (d.contextUpdates ?? []).length > 0
+        ? (d.contextUpdates!).map((u) => `  📬 [${u.id.slice(-6)}] ${u.type} ${u.sourceTask ? `from ${u.sourceTask.displayId}` : ''}: ${u.title}`).join('\n')
+        : '  (none)';
+
+      const activeRiskLines = (d.activeRisks ?? []).length > 0
+        ? (d.activeRisks!).map((r) => `  🔴 [${r.severity}] ${r.type}: ${r.title} ${r.sourceTask ? `(from ${r.sourceTask.displayId})` : ''}`).join('\n')
+        : '  (none)';
+
+      const branchLine = d.gitLink
+        ? `${d.gitLink.branchName ?? '(not set)'} | behind: ${d.gitLink.behindCount ?? 'N/A'} | commit: ${d.gitLink.latestCommitSha?.slice(0, 7) ?? 'unknown'}`
+        : '(not configured)';
+
       return {
         content: [{
           type: 'text',
@@ -417,6 +434,15 @@ ${conflictLines}
 
 Contract Risks:
 ${riskLines}
+
+⚡ Active Coordination Risks (Phase 4):
+${activeRiskLines}
+
+📬 Unread Context Updates (Phase 4):
+${contextUpdateLines}
+
+🌿 Branch Status:
+  ${branchLine}
 ════════════════════════════════════════════════
 ${d.coordinationStatus === 'BLOCKED' ? '🚫 Task is BLOCKED — resolve dependencies before proceeding.' : ''}
 ${d.coordinationStatus === 'READY_WITH_WARNINGS' ? '⚠️  Proceed with caution — coordinate with teammates about conflicts/risks.' : ''}
@@ -1283,12 +1309,393 @@ Use this to capture important choices that will inform the rest of the project.`
   },
 );
 
+// ── Phase 4 Tools ─────────────────────────────────────────────────────────────
+
+server.registerTool(
+  'get_git_status',
+  {
+    description: `Get the Git status of a task — branch name, latest commit, divergence from base branch.
+Returns ahead/behind counts so you know if your branch is stale relative to main/develop.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+    }),
+  },
+  async ({ task_id }) => {
+    try {
+      const response = await apiGet<{ success: boolean; data: {
+        taskId: string;
+        branchName: string | null;
+        baseBranch: string | null;
+        aheadCount: number | null;
+        behindCount: number | null;
+        latestCommitSha: string | null;
+        isDiverged: boolean;
+      } }>(`/tasks/${encodeURIComponent(task_id)}/branch-status`);
+
+      const s = response.data;
+      const divergenceMsg = s.isDiverged
+        ? `⚠️  BRANCH DIVERGED — ${s.behindCount} commit(s) behind ${s.baseBranch}`
+        : '✅ Branch is up to date.';
+
+      return {
+        content: [{
+          type: 'text',
+          text: `GIT STATUS for ${task_id}
+════════════════════════════════════════════════
+Branch:         ${s.branchName ?? '(not set)'}
+Base Branch:    ${s.baseBranch ?? '(not set)'}
+Latest Commit:  ${s.latestCommitSha ?? '(unknown)'}
+Ahead:          ${s.aheadCount ?? 'N/A'}
+Behind:         ${s.behindCount ?? 'N/A'}
+${divergenceMsg}`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get git status: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_actual_changes',
+  {
+    description: `Get the actual files changed by a task as recorded from Git pushes.
+Compares declared work intent vs actual Git changes to detect scope deviations.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+    }),
+  },
+  async ({ task_id }) => {
+    try {
+      const [changesRes, scopeRes] = await Promise.all([
+        apiGet<{ success: boolean; data: Array<{ filePath: string; changeType: string; additions: number; deletions: number; commitSha: string }> }>(
+          `/tasks/${encodeURIComponent(task_id)}/actual-changes`,
+        ),
+        apiGet<{ success: boolean; data: { declaredFiles: string[]; actualFiles: string[]; unexpectedFiles: string[]; missingDeclaredFiles: string[]; hasDeviation: boolean } }>(
+          `/tasks/${encodeURIComponent(task_id)}/scope-analysis`,
+        ),
+      ]);
+
+      const changes = changesRes.data;
+      const scope = scopeRes.data;
+
+      if (changes.length === 0) {
+        return { content: [{ type: 'text', text: `No actual Git changes recorded for task ${task_id} yet. Changes are recorded when a Git push arrives for the task's branch.` }] };
+      }
+
+      const changeLines = changes.map(
+        (c) => `  [${c.changeType}] ${c.filePath} (+${c.additions}/-${c.deletions}) @ ${c.commitSha.slice(0, 7)}`,
+      ).join('\n');
+
+      const deviationBlock = scope.hasDeviation
+        ? `\n⚠️  SCOPE DEVIATION DETECTED\nUnexpected files:\n${scope.unexpectedFiles.map((f) => `  ⚡ ${f}`).join('\n')}\nMissing declared files:\n${scope.missingDeclaredFiles.map((f) => `  ? ${f}`).join('\n')}`
+        : '\n✅ Actual scope matches declared work intent.';
+
+      return {
+        content: [{
+          type: 'text',
+          text: `ACTUAL CHANGES for ${task_id} (${changes.length} file(s)):
+${changeLines}
+${deviationBlock}`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get actual changes: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_context_updates',
+  {
+    description: `Get context updates for a task — notifications about upstream changes that affect your work.
+Context updates are generated when another task modifies a contract or type your task consumes.
+Always check for unread context updates at the start of a work session via begin_task.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+      status: z.enum(['UNREAD', 'READ', 'ACKNOWLEDGED', 'RESOLVED']).optional().describe('Filter by status (default: all)'),
+    }),
+  },
+  async ({ task_id, status }) => {
+    try {
+      const qs = status ? `?status=${status}` : '';
+      const response = await apiGet<{ success: boolean; data: Array<{
+        id: string;
+        type: string;
+        title: string;
+        message: string;
+        status: string;
+        createdAt: string;
+        sourceTask: { displayId: string; title: string } | null;
+        entity: { name: string; type: string } | null;
+      }> }>(`/tasks/${encodeURIComponent(task_id)}/context-updates${qs}`);
+
+      if (response.data.length === 0) {
+        return { content: [{ type: 'text', text: `✅ No context updates for task ${task_id}.` }] };
+      }
+
+      const lines = response.data.map((u) => {
+        const from = u.sourceTask ? `from ${u.sourceTask.displayId}` : '';
+        const entity = u.entity ? ` [${u.entity.type}: ${u.entity.name}]` : '';
+        return `[${u.id.slice(-6)}] ${u.status} | ${u.type}${entity} ${from}\n  ${u.message}`;
+      }).join('\n\n');
+
+      return {
+        content: [{
+          type: 'text',
+          text: `CONTEXT UPDATES for ${task_id} (${response.data.length}):
+════════════════════════════════════════════════
+${lines}
+════════════════════════════════════════════════
+Use acknowledge_context_update to mark updates as ACKNOWLEDGED after reviewing.`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get context updates: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'acknowledge_context_update',
+  {
+    description: `Acknowledge a context update after you have reviewed it and adapted your work accordingly.
+Use status ACKNOWLEDGED when you have acted on the update, RESOLVED when it is no longer relevant.`,
+    inputSchema: z.object({
+      update_id: z.string().describe('Context update ID from get_context_updates'),
+      status: z.enum(['READ', 'ACKNOWLEDGED', 'RESOLVED']).describe('New status for the update'),
+    }),
+  },
+  async ({ update_id, status }) => {
+    try {
+      await apiPatch(`/context-updates/${encodeURIComponent(update_id)}/acknowledge`, { status });
+      return {
+        content: [{ type: 'text', text: `✅ Context update ${update_id} marked as ${status}.` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to acknowledge context update: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'acknowledge_risk',
+  {
+    description: `Acknowledge or dismiss a coordination risk.
+Use ACKNOWLEDGED when you are aware of the risk and proceeding carefully.
+Use DISMISSED when the risk is not applicable to your work.`,
+    inputSchema: z.object({
+      risk_id: z.string().describe('Risk ID from get_task_risks or begin_task active risks'),
+      status: z.enum(['ACKNOWLEDGED', 'DISMISSED']).describe('New status for the risk'),
+    }),
+  },
+  async ({ risk_id, status }) => {
+    try {
+      await apiPatch(`/risks/${encodeURIComponent(risk_id)}/acknowledge`, { status });
+      return {
+        content: [{ type: 'text', text: `✅ Risk ${risk_id} marked as ${status}.` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to acknowledge risk: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_impact_analysis',
+  {
+    description: `Get the impact analysis for a code entity — who consumes it and which active tasks are affected.
+Use the entity ID from get_actual_changes or get_active_contract.`,
+    inputSchema: z.object({
+      entity_id: z.string().describe('Code entity ID'),
+    }),
+  },
+  async ({ entity_id }) => {
+    try {
+      const response = await apiGet<{ success: boolean; data: {
+        changedEntity: { id: string; name: string; type: string; filePath: string };
+        directConsumers: Array<{
+          entity: { id: string; name: string; filePath: string };
+          relationship: string;
+          confidence: string;
+          activeTasks: Array<{ taskId: string; taskDisplayId: string; taskTitle: string }>;
+        }>;
+        totalAffectedTasks: number;
+      } }>(`/entities/${encodeURIComponent(entity_id)}/impact`);
+
+      const d = response.data;
+      const consumerLines = d.directConsumers.map((c) => {
+        const taskLines = c.activeTasks.length > 0
+          ? c.activeTasks.map((t) => `      → ${t.taskDisplayId}: ${t.taskTitle}`).join('\n')
+          : '      (no active tasks)';
+        return `  • ${c.entity.name} (${c.entity.filePath}) [${c.relationship}, ${c.confidence}]\n${taskLines}`;
+      }).join('\n');
+
+      return {
+        content: [{
+          type: 'text',
+          text: `IMPACT ANALYSIS for ${d.changedEntity.type} "${d.changedEntity.name}"
+${d.changedEntity.filePath}
+════════════════════════════════════════════════
+Direct Consumers (${d.directConsumers.length}):
+${consumerLines || '  (none found)'}
+
+Total Affected Active Tasks: ${d.totalAffectedTasks}`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get impact analysis: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_active_contract',
+  {
+    description: `Get the active declared contracts for a task — what APIs, types, or models it provides, modifies, or consumes.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+    }),
+  },
+  async ({ task_id }) => {
+    try {
+      const response = await apiGet<Array<{
+        id: string;
+        type: string;
+        name: string;
+        relationship: string;
+        createdAt: string;
+      }>>(`/tasks/${encodeURIComponent(task_id)}/contracts`);
+
+      if (response.length === 0) {
+        return { content: [{ type: 'text', text: `No contracts declared for task ${task_id}.` }] };
+      }
+
+      const lines = response.map(
+        (c) => `  [${c.id.slice(-6)}] ${c.relationship} ${c.type} "${c.name}"`,
+      ).join('\n');
+
+      return { content: [{ type: 'text', text: `Contracts for ${task_id}:\n${lines}` }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get contracts: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_contract_consumers',
+  {
+    description: `Get all tasks that consume a given contract name across the project.
+Useful for understanding blast radius before modifying a shared type, API, or model.`,
+    inputSchema: z.object({
+      project_id: z.string().describe('The project ID'),
+      contract_name: z.string().describe('Contract name to search for (e.g. "LoginResponse", "POST /api/login")'),
+    }),
+  },
+  async ({ project_id, contract_name }) => {
+    try {
+      const response = await apiGet<{
+        success: boolean;
+        data: Array<{
+          contractName: string;
+          contractType: string;
+          sourceTaskDisplayId: string;
+          sourceRelationship: string;
+          affectedTaskDisplayId: string;
+          affectedRelationship: string;
+        }>;
+      }>(`/projects/${encodeURIComponent(project_id)}/coordination/risks`);
+
+      const relevant = response.data.filter(
+        (r) => r.contractName.toLowerCase() === contract_name.toLowerCase(),
+      );
+
+      if (relevant.length === 0) {
+        return { content: [{ type: 'text', text: `No active contract risks found for "${contract_name}".` }] };
+      }
+
+      const lines = relevant.map(
+        (r) => `  ${r.sourceTaskDisplayId} ${r.sourceRelationship}s "${r.contractName}" — affects ${r.affectedTaskDisplayId} (${r.affectedRelationship}s it)`,
+      ).join('\n');
+
+      return { content: [{ type: 'text', text: `Contract consumers for "${contract_name}":\n${lines}` }] };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get contract consumers: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'get_branch_status',
+  {
+    description: `Get branch divergence status for a task — how far ahead/behind its branch is from the base branch.
+Triggers a live check against the GitHub API if a repository is connected.`,
+    inputSchema: z.object({
+      task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
+    }),
+  },
+  async ({ task_id }) => {
+    try {
+      const response = await apiGet<{ success: boolean; data: {
+        branchName: string | null;
+        baseBranch: string | null;
+        aheadCount: number | null;
+        behindCount: number | null;
+        latestCommitSha: string | null;
+        isDiverged: boolean;
+      } }>(`/tasks/${encodeURIComponent(task_id)}/branch-status`);
+
+      const s = response.data;
+      const icon = s.isDiverged ? '⚠️' : '✅';
+      return {
+        content: [{
+          type: 'text',
+          text: `${icon} Branch Status for ${task_id}
+Branch: ${s.branchName ?? 'not set'} → base: ${s.baseBranch ?? 'not set'}
+Ahead: ${s.aheadCount ?? 'N/A'}  Behind: ${s.behindCount ?? 'N/A'}
+Latest commit: ${s.latestCommitSha ?? 'unknown'}
+${s.isDiverged ? `⚠️  ${s.behindCount} commit(s) behind base — rebase recommended.` : '✅ Up to date.'}`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `Failed to get branch status: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error('Arxion MCP Server v0.4.0 running on stdio');
+  console.error('Arxion MCP Server v0.4.0 (Phase 4) running on stdio');
   console.error(`Backend API: ${API_BASE_URL}`);
 }
 

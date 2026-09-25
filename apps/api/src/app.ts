@@ -13,6 +13,10 @@ import { reviewRoutes } from './modules/reviews/review.routes.js';
 import { reviewFindingRoutes } from './modules/reviews/review-findings.routes.js';
 import { gitRoutes } from './modules/git/git.routes.js';
 import { decisionRoutes } from './modules/decisions/decision.routes.js';
+// Phase 4
+import { repositoryRoutes } from './modules/repositories/repository.routes.js';
+import { webhookRoutes } from './modules/webhooks/webhook.routes.js';
+import { phase4Routes } from './modules/phase4/phase4.routes.js';
 import { errorHandler } from './lib/error-handler.js';
 import { startStalenessWatcher } from './lib/staleness-watcher.js';
 import { realtimeEmitter } from './lib/realtime.js';
@@ -46,6 +50,10 @@ export async function buildApp() {
   await app.register(reviewFindingRoutes);
   await app.register(gitRoutes);
   await app.register(decisionRoutes);
+  // Phase 4
+  await app.register(repositoryRoutes);
+  await app.register(webhookRoutes);
+  await app.register(phase4Routes);
 
   // Attach Socket.IO and start background jobs after server is ready
   app.addHook('onReady', () => {

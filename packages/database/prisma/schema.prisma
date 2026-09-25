@@ -1,5 +1,5 @@
 // Prisma schema for Arxion — Agent-agnostic collaboration platform
-// Phase 3: Review, Merge Readiness, Completion, and Context Propagation
+// Phase 4: Git-Verified Change Intelligence and Cross-Agent Impact Propagation
 
 generator client {
   provider = "prisma-client-js"
@@ -134,6 +134,118 @@ enum MergeStatus {
   CANCELLED
 }
 
+// Phase 4: Git provider type
+enum GitProvider {
+  GITHUB
+  GITLAB
+  BITBUCKET
+}
+
+// Phase 4: Repository connection status
+enum RepositoryStatus {
+  CONNECTED
+  DISCONNECTED
+  ERROR
+}
+
+// Phase 4: External event processing status
+enum ExternalEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+// Phase 4: Actual change type from git diff
+enum ActualChangeType {
+  ADDED
+  MODIFIED
+  DELETED
+  RENAMED
+}
+
+// Phase 4: Code entity type
+enum CodeEntityType {
+  FILE
+  API
+  TYPE
+  MODEL
+  SCHEMA
+  EVENT
+  MODULE
+}
+
+// Phase 4: Code relationship kind
+enum CodeRelationshipKind {
+  PROVIDES
+  CONSUMES
+  IMPORTS
+  DEPENDS_ON
+  IMPLEMENTS
+  MODIFIES
+  DEFINES
+  CALLS
+}
+
+// Phase 4: Relationship detection source
+enum RelationshipSource {
+  DETERMINISTIC
+  DECLARED
+  INFERRED
+}
+
+// Phase 4: Confidence level
+enum Confidence {
+  HIGH
+  MEDIUM
+  LOW
+}
+
+// Phase 4: Contract change kind
+enum ContractChangeKind {
+  ADDED
+  REMOVED
+  MODIFIED
+  RENAMED
+}
+
+// Phase 4: Coordination risk type
+enum CoordinationRiskType {
+  FILE_OVERLAP
+  CONTRACT_CHANGE
+  DEPENDENCY_CHANGE
+  SCOPE_EXPANSION
+  SCHEMA_CHANGE
+  STALE_REVIEW
+  BRANCH_DIVERGENCE
+  MERGE_CONFLICT
+  ARCHITECTURAL_CONFLICT
+}
+
+// Phase 4: Coordination risk severity
+enum RiskSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Phase 4: Coordination risk status
+enum CoordinationRiskStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  DISMISSED
+}
+
+// Phase 4: Context update status
+enum ContextUpdateStatus {
+  UNREAD
+  READ
+  ACKNOWLEDGED
+  RESOLVED
+}
+
 // Phase 3: Project decision status
 enum ProjectDecisionStatus {
   ACTIVE
@@ -174,14 +286,20 @@ model Project {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  createdBy        User                  @relation("CreatedByUser", fields: [createdById], references: [id])
-  members          ProjectMember[]
-  tasks            Task[]
-  fileReservations TaskFileReservation[]
-  agentSessions    AgentSession[]
-  taskActivities   TaskActivity[]
-  taskContracts    TaskContract[]
-  projectDecisions ProjectDecision[]
+  createdBy           User                  @relation("CreatedByUser", fields: [createdById], references: [id])
+  members             ProjectMember[]
+  tasks               Task[]
+  fileReservations    TaskFileReservation[]
+  agentSessions       AgentSession[]
+  taskActivities      TaskActivity[]
+  taskContracts       TaskContract[]
+  projectDecisions    ProjectDecision[]
+  // Phase 4
+  repositories        ProjectRepository[]
+  codeEntities        CodeEntity[]
+  codeRelationships   CodeRelationship[]
+  coordinationRisks   CoordinationRisk[]
+  contextUpdates      ContextUpdate[]
 
   @@map("projects")
 }
@@ -230,6 +348,13 @@ model Task {
   gitLinks          TaskGitLink[]
   contractVersions  ContractVersion[]
   projectDecisions  ProjectDecision[]      @relation("TaskDecisions")
+  // Phase 4
+  actualChanges     TaskActualChange[]
+  contractChanges   ContractChange[]
+  sourceRisks       CoordinationRisk[]     @relation("SourceRisks")
+  affectedRisks     CoordinationRisk[]     @relation("AffectedRisks")
+  sourceUpdates     ContextUpdate[]        @relation("SourceUpdates")
+  affectedUpdates   ContextUpdate[]        @relation("AffectedUpdates")
 
   @@unique([projectId, displayId])
   @@map("tasks")
@@ -401,10 +526,11 @@ model ReviewFinding {
   @@map("review_findings")
 }
 
-/// Phase 3: Git revision binding for a task
+/// Phase 3 / Phase 4: Git revision binding for a task
 model TaskGitLink {
   id                String      @id @default(cuid())
   taskId            String
+  repositoryId      String?     // Phase 4: FK to ProjectRepository
   repositoryUrl     String?
   branchName        String?
   baseBranch        String?
@@ -414,9 +540,14 @@ model TaskGitLink {
   mergeStatus       MergeStatus @default(NOT_STARTED)
   mergedCommitSha   String?
   mergedAt          DateTime?
+  // Phase 4: divergence tracking
+  aheadCount        Int?
+  behindCount       Int?
+  divergenceCheckedAt DateTime?
   updatedAt         DateTime    @updatedAt
 
-  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  task       Task               @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  repository ProjectRepository? @relation(fields: [repositoryId], references: [id])
 
   @@map("task_git_links")
 }
@@ -498,4 +629,177 @@ model TaskWorkIntent {
   task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@map("task_work_intents")
+}
+
+// ─── Phase 4 Models ────────────────────────────────────────────────────────────
+
+/// Phase 4: A connected Git repository for a project
+model ProjectRepository {
+  id                   String           @id @default(cuid())
+  projectId            String
+  provider             GitProvider      @default(GITHUB)
+  owner                String           // GitHub org or user
+  repository           String           // repo name
+  defaultBranch        String           @default("main")
+  externalRepositoryId String?          // provider's repo ID
+  webhookSecret        String?          // stored server-side only
+  status               RepositoryStatus @default(CONNECTED)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  project       Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  externalEvents ExternalEvent[]
+  actualChanges  TaskActualChange[]
+  taskGitLinks   TaskGitLink[]
+
+  @@unique([projectId, owner, repository])
+  @@map("project_repositories")
+}
+
+/// Phase 4: Deduplicated external webhook events
+model ExternalEvent {
+  id              String              @id @default(cuid())
+  provider        GitProvider         @default(GITHUB)
+  externalEventId String              // provider's delivery ID
+  eventType       String              // push, pull_request, etc.
+  repositoryId    String
+  payloadHash     String              // SHA256 of payload body
+  receivedAt      DateTime            @default(now())
+  processedAt     DateTime?
+  status          ExternalEventStatus @default(RECEIVED)
+  errorMessage    String?
+
+  repository ProjectRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, externalEventId])
+  @@map("external_events")
+}
+
+/// Phase 4: Actual file changes detected from Git for a task
+model TaskActualChange {
+  id           String           @id @default(cuid())
+  taskId       String
+  repositoryId String
+  commitSha    String
+  filePath     String
+  changeType   ActualChangeType
+  additions    Int              @default(0)
+  deletions    Int              @default(0)
+  metadata     Json?
+  detectedAt   DateTime         @default(now())
+
+  task       Task              @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  repository ProjectRepository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  @@map("task_actual_changes")
+}
+
+/// Phase 4: An indexed code entity (type, API, model, schema, etc.)
+model CodeEntity {
+  id           String         @id @default(cuid())
+  projectId    String
+  repositoryId String?
+  type         CodeEntityType
+  name         String         // e.g. "LoginResponse", "POST /api/login"
+  filePath     String
+  symbolName   String?        // e.g. fully-qualified name
+  metadata     Json?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  project            Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  outgoingRelations  CodeRelationship[] @relation("SourceEntity")
+  incomingRelations  CodeRelationship[] @relation("TargetEntity")
+  contractChanges    ContractChange[]
+  sourceRisks        CoordinationRisk[] @relation("RiskSourceEntity")
+  contextUpdates     ContextUpdate[]
+
+  @@unique([projectId, filePath, name, type])
+  @@map("code_entities")
+}
+
+/// Phase 4: Relationship between two code entities
+model CodeRelationship {
+  id             String               @id @default(cuid())
+  projectId      String
+  sourceEntityId String
+  targetEntityId String
+  relationship   CodeRelationshipKind
+  confidence     Confidence           @default(HIGH)
+  source         RelationshipSource   @default(DETERMINISTIC)
+  createdAt      DateTime             @default(now())
+  updatedAt      DateTime             @updatedAt
+
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceEntity CodeEntity @relation("SourceEntity", fields: [sourceEntityId], references: [id], onDelete: Cascade)
+  targetEntity CodeEntity @relation("TargetEntity", fields: [targetEntityId], references: [id], onDelete: Cascade)
+
+  @@unique([sourceEntityId, targetEntityId, relationship])
+  @@map("code_relationships")
+}
+
+/// Phase 4: A detected change to a contract entity
+model ContractChange {
+  id               String             @id @default(cuid())
+  projectId        String
+  taskId           String
+  entityId         String
+  previousRevision String?            // JSON snapshot of prior shape
+  currentRevision  String?            // JSON snapshot of current shape
+  changeKind       ContractChangeKind
+  breaking         Boolean?           // null = undetermined
+  confidence       Confidence         @default(HIGH)
+  detectedAt       DateTime           @default(now())
+
+  task   Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  entity CodeEntity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@map("contract_changes")
+}
+
+/// Phase 4: Coordination risk between tasks
+model CoordinationRisk {
+  id             String                 @id @default(cuid())
+  projectId      String
+  sourceTaskId   String
+  affectedTaskId String
+  type           CoordinationRiskType
+  severity       RiskSeverity           @default(MEDIUM)
+  confidence     Confidence             @default(HIGH)
+  title          String
+  description    String
+  sourceEntityId String?
+  status         CoordinationRiskStatus @default(OPEN)
+  detectedAt     DateTime               @default(now())
+  resolvedAt     DateTime?
+
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceTask   Task       @relation("SourceRisks", fields: [sourceTaskId], references: [id], onDelete: Cascade)
+  affectedTask Task       @relation("AffectedRisks", fields: [affectedTaskId], references: [id], onDelete: Cascade)
+  sourceEntity CodeEntity? @relation("RiskSourceEntity", fields: [sourceEntityId], references: [id])
+
+  @@map("coordination_risks")
+}
+
+/// Phase 4: Context update delivered to an affected task/agent
+model ContextUpdate {
+  id             String              @id @default(cuid())
+  projectId      String
+  sourceTaskId   String
+  affectedTaskId String
+  type           String              // e.g. CONTRACT_CHANGE, SCOPE_EXPANSION, BRANCH_DIVERGENCE
+  title          String
+  message        String
+  entityId       String?
+  riskId         String?
+  status         ContextUpdateStatus @default(UNREAD)
+  createdAt      DateTime            @default(now())
+  acknowledgedAt DateTime?
+
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sourceTask   Task       @relation("SourceUpdates", fields: [sourceTaskId], references: [id], onDelete: Cascade)
+  affectedTask Task       @relation("AffectedUpdates", fields: [affectedTaskId], references: [id], onDelete: Cascade)
+  entity       CodeEntity? @relation(fields: [entityId], references: [id])
+
+  @@map("context_updates")
 }

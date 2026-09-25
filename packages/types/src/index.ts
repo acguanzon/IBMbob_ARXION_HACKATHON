@@ -589,6 +589,36 @@ export interface CoordinationPreflight {
   fileConflicts: FileConflict[];
   contractRisks: ContractRisk[];
   coordinationStatus: 'READY' | 'READY_WITH_WARNINGS' | 'BLOCKED';
+  // Phase 4 additions
+  contextUpdates?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    message: string;
+    status: string;
+    createdAt: Date;
+    sourceTask: { displayId: string; title: string } | null;
+    entity: { name: string; type: string } | null;
+  }>;
+  activeRisks?: Array<{
+    id: string;
+    type: string;
+    severity: string;
+    confidence: string;
+    title: string;
+    description: string;
+    detectedAt: Date;
+    sourceTask: { displayId: string; title: string } | null;
+    sourceEntity: { name: string; type: string } | null;
+  }>;
+  gitLink?: {
+    branchName: string | null;
+    baseBranch: string | null;
+    latestCommitSha: string | null;
+    aheadCount: number | null;
+    behindCount: number | null;
+    mergeStatus: string;
+  } | null;
 }
 
 // Phase 3: Review preflight result
@@ -637,6 +667,224 @@ export const ApiErrorSchema = z.object({
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 
+// ─── Phase 4 Enums ────────────────────────────────────────────────────────────
+
+export const GitProviderSchema = z.enum(['GITHUB', 'GITLAB', 'BITBUCKET'])
+export type GitProvider = z.infer<typeof GitProviderSchema>
+
+export const RepositoryStatusSchema = z.enum(['CONNECTED', 'DISCONNECTED', 'ERROR'])
+export type RepositoryStatus = z.infer<typeof RepositoryStatusSchema>
+
+export const ExternalEventStatusSchema = z.enum(['RECEIVED', 'PROCESSED', 'FAILED', 'IGNORED'])
+export type ExternalEventStatus = z.infer<typeof ExternalEventStatusSchema>
+
+export const ActualChangeTypeSchema = z.enum(['ADDED', 'MODIFIED', 'DELETED', 'RENAMED'])
+export type ActualChangeType = z.infer<typeof ActualChangeTypeSchema>
+
+export const CodeEntityTypeSchema = z.enum(['FILE', 'API', 'TYPE', 'MODEL', 'SCHEMA', 'EVENT', 'MODULE'])
+export type CodeEntityType = z.infer<typeof CodeEntityTypeSchema>
+
+export const CodeRelationshipKindSchema = z.enum([
+  'PROVIDES', 'CONSUMES', 'IMPORTS', 'DEPENDS_ON', 'IMPLEMENTS', 'MODIFIES', 'DEFINES', 'CALLS',
+])
+export type CodeRelationshipKind = z.infer<typeof CodeRelationshipKindSchema>
+
+export const RelationshipSourceSchema = z.enum(['DETERMINISTIC', 'DECLARED', 'INFERRED'])
+export type RelationshipSource = z.infer<typeof RelationshipSourceSchema>
+
+export const ConfidenceSchema = z.enum(['HIGH', 'MEDIUM', 'LOW'])
+export type Confidence = z.infer<typeof ConfidenceSchema>
+
+export const ContractChangeKindSchema = z.enum(['ADDED', 'REMOVED', 'MODIFIED', 'RENAMED'])
+export type ContractChangeKind = z.infer<typeof ContractChangeKindSchema>
+
+export const CoordinationRiskTypeSchema = z.enum([
+  'FILE_OVERLAP', 'CONTRACT_CHANGE', 'DEPENDENCY_CHANGE', 'SCOPE_EXPANSION',
+  'SCHEMA_CHANGE', 'STALE_REVIEW', 'BRANCH_DIVERGENCE', 'MERGE_CONFLICT', 'ARCHITECTURAL_CONFLICT',
+])
+export type CoordinationRiskType = z.infer<typeof CoordinationRiskTypeSchema>
+
+export const RiskSeveritySchema = z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
+export type RiskSeverity = z.infer<typeof RiskSeveritySchema>
+
+export const CoordinationRiskStatusSchema = z.enum(['OPEN', 'ACKNOWLEDGED', 'RESOLVED', 'DISMISSED'])
+export type CoordinationRiskStatus = z.infer<typeof CoordinationRiskStatusSchema>
+
+export const ContextUpdateStatusSchema = z.enum(['UNREAD', 'READ', 'ACKNOWLEDGED', 'RESOLVED'])
+export type ContextUpdateStatus = z.infer<typeof ContextUpdateStatusSchema>
+
+// ─── Phase 4 Models ───────────────────────────────────────────────────────────
+
+export const ProjectRepositorySchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  provider: GitProviderSchema,
+  owner: z.string(),
+  repository: z.string(),
+  defaultBranch: z.string(),
+  externalRepositoryId: z.string().nullable(),
+  status: RepositoryStatusSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+export type ProjectRepository = z.infer<typeof ProjectRepositorySchema>
+
+export const ExternalEventSchema = z.object({
+  id: z.string(),
+  provider: GitProviderSchema,
+  externalEventId: z.string(),
+  eventType: z.string(),
+  repositoryId: z.string(),
+  payloadHash: z.string(),
+  receivedAt: z.string(),
+  processedAt: z.string().nullable(),
+  status: ExternalEventStatusSchema,
+  errorMessage: z.string().nullable(),
+})
+export type ExternalEvent = z.infer<typeof ExternalEventSchema>
+
+export const TaskActualChangeSchema = z.object({
+  id: z.string(),
+  taskId: z.string(),
+  repositoryId: z.string(),
+  commitSha: z.string(),
+  filePath: z.string(),
+  changeType: ActualChangeTypeSchema,
+  additions: z.number().int(),
+  deletions: z.number().int(),
+  metadata: z.unknown().nullable(),
+  detectedAt: z.string(),
+})
+export type TaskActualChange = z.infer<typeof TaskActualChangeSchema>
+
+export const CodeEntitySchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  repositoryId: z.string().nullable(),
+  type: CodeEntityTypeSchema,
+  name: z.string(),
+  filePath: z.string(),
+  symbolName: z.string().nullable(),
+  metadata: z.unknown().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+export type CodeEntity = z.infer<typeof CodeEntitySchema>
+
+export const CodeRelationshipSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  sourceEntityId: z.string(),
+  targetEntityId: z.string(),
+  relationship: CodeRelationshipKindSchema,
+  confidence: ConfidenceSchema,
+  source: RelationshipSourceSchema,
+  createdAt: z.string(),
+  updatedAt: z.string(),
+})
+export type CodeRelationship = z.infer<typeof CodeRelationshipSchema>
+
+export const ContractChangeSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  taskId: z.string(),
+  entityId: z.string(),
+  previousRevision: z.string().nullable(),
+  currentRevision: z.string().nullable(),
+  changeKind: ContractChangeKindSchema,
+  breaking: z.boolean().nullable(),
+  confidence: ConfidenceSchema,
+  detectedAt: z.string(),
+})
+export type ContractChange = z.infer<typeof ContractChangeSchema>
+
+export const CoordinationRiskSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  sourceTaskId: z.string(),
+  affectedTaskId: z.string(),
+  type: CoordinationRiskTypeSchema,
+  severity: RiskSeveritySchema,
+  confidence: ConfidenceSchema,
+  title: z.string(),
+  description: z.string(),
+  sourceEntityId: z.string().nullable(),
+  status: CoordinationRiskStatusSchema,
+  detectedAt: z.string(),
+  resolvedAt: z.string().nullable(),
+})
+export type CoordinationRisk = z.infer<typeof CoordinationRiskSchema>
+
+export const ContextUpdateSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  sourceTaskId: z.string(),
+  affectedTaskId: z.string(),
+  type: z.string(),
+  title: z.string(),
+  message: z.string(),
+  entityId: z.string().nullable(),
+  riskId: z.string().nullable(),
+  status: ContextUpdateStatusSchema,
+  createdAt: z.string(),
+  acknowledgedAt: z.string().nullable(),
+})
+export type ContextUpdate = z.infer<typeof ContextUpdateSchema>
+
+// ─── Phase 4 Request Bodies ───────────────────────────────────────────────────
+
+export const ConnectRepositoryBodySchema = z.object({
+  provider: GitProviderSchema.optional().default('GITHUB'),
+  owner: z.string().min(1),
+  repository: z.string().min(1),
+  defaultBranch: z.string().optional().default('main'),
+  webhookSecret: z.string().optional(),
+})
+export type ConnectRepositoryBody = z.infer<typeof ConnectRepositoryBodySchema>
+
+export const AcknowledgeRiskBodySchema = z.object({
+  status: z.enum(['ACKNOWLEDGED', 'DISMISSED']),
+})
+export type AcknowledgeRiskBody = z.infer<typeof AcknowledgeRiskBodySchema>
+
+export const AcknowledgeContextUpdateBodySchema = z.object({
+  status: z.enum(['READ', 'ACKNOWLEDGED', 'RESOLVED']),
+})
+export type AcknowledgeContextUpdateBody = z.infer<typeof AcknowledgeContextUpdateBodySchema>
+
+// ─── Phase 4 Response Types ───────────────────────────────────────────────────
+
+export interface ActualScopeAnalysis {
+  taskId: string
+  declaredFiles: string[]
+  actualFiles: string[]
+  unexpectedFiles: string[]
+  missingDeclaredFiles: string[]
+  hasDeviation: boolean
+}
+
+export interface BranchStatus {
+  taskId: string
+  branchName: string | null
+  baseBranch: string | null
+  aheadCount: number | null
+  behindCount: number | null
+  latestCommitSha: string | null
+  divergenceCheckedAt: string | null
+  isDiverged: boolean
+}
+
+export interface ImpactAnalysis {
+  changedEntity: CodeEntity
+  directConsumers: Array<{
+    entity: CodeEntity
+    relationship: CodeRelationshipKind
+    confidence: Confidence
+    activeTasks: Array<{ taskId: string; taskDisplayId: string; taskTitle: string }>
+  }>
+  totalAffectedTasks: number
+}
+
 // ─── Domain Event Types ────────────────────────────────────────────────────────
 
 export type DomainEventType =
@@ -674,7 +922,21 @@ export type DomainEventType =
   | 'merge.confirmed'
   | 'decision.recorded'
   | 'decision.superseded'
-  | 'member.joined';
+  | 'member.joined'
+  // Phase 4
+  | 'repository.connected'
+  | 'git.push_received'
+  | 'git.change_detected'
+  | 'scope.deviation_detected'
+  | 'code_entity.changed'
+  | 'contract.change_detected'
+  | 'risk.created'
+  | 'risk.updated'
+  | 'risk.resolved'
+  | 'context_update.created'
+  | 'context_update.acknowledged'
+  | 'branch.diverged'
+  | 'merge_risk.detected';
 
 export interface DomainEvent<T = unknown> {
   type: DomainEventType;
