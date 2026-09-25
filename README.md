@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Arxion
 
 **Agent-agnostic collaboration layer for AI-assisted software development.**
@@ -370,3 +371,6 @@ Planned future integrations:
 ## Contributing
 
 See [AGENTS.md](./AGENTS.md) for the full architectural guide for coding agents working in this repository.
+=======
+# IBMbob_ARXION_HACKATHON
+>>>>>>> 0aa814e940fd5d28ed501ed2aa84e73e4c9bde5f
