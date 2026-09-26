@@ -2,8 +2,7 @@ import { api } from '@/lib/api';
 import { Sidebar } from '@/components/Sidebar';
 import { ActivityPanel } from '@/components/ActivityPanel';
 import { RealtimeProvider } from '@/components/RealtimeProvider';
-import { KanbanBoard } from '@/components/kanban/KanbanBoard';
-import { AgentDock } from '@/components/dock/AgentDock';
+import { ProjectBoardClient } from '@/components/kanban/ProjectBoardClient';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
@@ -111,7 +110,7 @@ export default async function ProjectDashboardPage({ params }: ProjectPageProps)
         {/* Task Board */}
         <div className="flex-1 overflow-auto p-4">
           {project ? (
-            <KanbanBoard tasks={tasks} projectId={project.id} taskMeta={taskMeta} />
+            <ProjectBoardClient tasks={tasks} projectId={project.id} taskMeta={taskMeta} />
           ) : (
             <div className="flex h-full items-center justify-center">
               <div className="text-center">
@@ -125,9 +124,6 @@ export default async function ProjectDashboardPage({ params }: ProjectPageProps)
 
       {/* Right activity panel */}
       <ActivityPanel project={project} />
-
-      {/* Agent Dock */}
-      {project && <AgentDock projectId={project.id} />}
     </div>
   );
 }

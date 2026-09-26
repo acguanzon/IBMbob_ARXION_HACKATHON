@@ -8,6 +8,10 @@ import { useAuth } from '@/context/AuthContext';
 
 interface AgentDockProps {
   projectId: string;
+  /** Task that was dragged onto the dock. Controlled externally. */
+  droppedTask: TaskWithRelations | null;
+  /** Called when the dock wants to clear the dropped task (cancel / dismiss). */
+  onClear: () => void;
 }
 
 const AGENT_TYPES = [
@@ -21,11 +25,10 @@ type AgentTypeValue = (typeof AGENT_TYPES)[number]['value'];
 const COPY_TEMPLATE = (displayId: string) =>
   `Work on Arxion task ${displayId}. Accept my pending launch request and retrieve the current context package.`;
 
-export function AgentDock({ projectId }: AgentDockProps) {
+export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
   const { user } = useAuth();
   const [agentType, setAgentType] = useState<AgentTypeValue>('IBM_BOB');
   const [pendingRequest, setPendingRequest] = useState<LaunchRequest | null>(null);
-  const [droppedTask, setDroppedTask] = useState<TaskWithRelations | null>(null);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -33,6 +36,14 @@ export function AgentDock({ projectId }: AgentDockProps) {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { setNodeRef, isOver } = useDroppable({ id: 'agent-dock' });
+
+  // Clear the pending request when droppedTask is cleared externally
+  useEffect(() => {
+    if (!droppedTask) {
+      setPendingRequest(null);
+      if (pollRef.current) clearInterval(pollRef.current);
+    }
+  }, [droppedTask]);
 
   // Poll for accepted launch requests
   const startPolling = useCallback(
@@ -73,7 +84,6 @@ export function AgentDock({ projectId }: AgentDockProps) {
         userId: user.id,
       });
       setPendingRequest(req);
-      setDroppedTask(task);
       startPolling(req.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to launch agent');
@@ -83,14 +93,14 @@ export function AgentDock({ projectId }: AgentDockProps) {
   }
 
   async function handleCancel() {
-    if (!pendingRequest) return;
-    try {
-      await api.launch.cancel(pendingRequest.id);
-    } catch {
-      // non-fatal
+    if (pendingRequest) {
+      try {
+        await api.launch.cancel(pendingRequest.id);
+      } catch {
+        // non-fatal
+      }
     }
-    setPendingRequest(null);
-    setDroppedTask(null);
+    onClear();
     if (pollRef.current) clearInterval(pollRef.current);
   }
 
