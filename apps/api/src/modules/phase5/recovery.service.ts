@@ -180,6 +180,7 @@ export async function resumeTask(opts: {
 
 async function computeDelta(snapshot: {
   taskId: string
+  projectId: string
   createdAt: Date
   lastKnownRevision: unknown
 }) {
@@ -188,6 +189,7 @@ async function computeDelta(snapshot: {
   const [newDecisions, newRisks, newContextUpdates, newHandoffs] = await Promise.all([
     prisma.projectDecision.findMany({
       where: {
+        projectId: snapshot.projectId,
         createdAt: { gt: since },
       },
       select: { id: true, title: true, decision: true, createdAt: true },

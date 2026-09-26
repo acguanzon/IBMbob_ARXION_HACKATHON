@@ -139,6 +139,7 @@ export const TaskSchema = z.object({
   updatedAt: z.coerce.date(),
   startedAt: z.coerce.date().nullable(),
   completedAt: z.coerce.date().nullable(),
+  acceptanceCriteria: z.array(z.string()),
 });
 export type Task = z.infer<typeof TaskSchema>;
 
@@ -352,6 +353,7 @@ export const CreateTaskBodySchema = z.object({
   status: TaskStatusSchema.optional().default('BACKLOG'),
   priority: TaskPrioritySchema.optional().default('MEDIUM'),
   assigneeId: z.string().optional(),
+  acceptanceCriteria: z.array(z.string()).optional().default([]),
 });
 export type CreateTaskBody = z.infer<typeof CreateTaskBodySchema>;
 
@@ -361,6 +363,7 @@ export const UpdateTaskBodySchema = z.object({
   status: TaskStatusSchema.optional(),
   priority: TaskPrioritySchema.optional(),
   assigneeId: z.string().nullable().optional(),
+  acceptanceCriteria: z.array(z.string()).optional(),
 });
 export type UpdateTaskBody = z.infer<typeof UpdateTaskBodySchema>;
 
@@ -948,7 +951,11 @@ export type DomainEventType =
   | 'recovery_snapshot.created'
   | 'task.resume_started'
   | 'task.resume_completed'
-  | 'parallel_safety.changed';
+  | 'parallel_safety.changed'
+  // Realignment
+  | 'agent.launch_requested'
+  | 'agent.launch_accepted'
+  | 'agent.launch_cancelled';
 
 export interface DomainEvent<T = unknown> {
   type: DomainEventType;
@@ -1134,3 +1141,78 @@ export const CoordinatorSummarySchema = z.object({
   highRisks: z.array(z.record(z.unknown())),
 });
 export type CoordinatorSummary = z.infer<typeof CoordinatorSummarySchema>;
+
+// ─── Realignment: Auth & Launch enums ────────────────────────────────────────
+
+export const AgentLaunchStatusSchema = z.enum([
+  'PENDING',
+  'ACCEPTED',
+  'EXPIRED',
+  'CANCELLED',
+  'FAILED',
+]);
+export type AgentLaunchStatus = z.infer<typeof AgentLaunchStatusSchema>;
+
+// ─── Realignment: Core Schemas ────────────────────────────────────────────────
+
+export const UserSessionSchema = z.object({
+  id: z.string(),
+  userId: z.string(),
+  token: z.string(),
+  createdAt: z.coerce.date(),
+  expiresAt: z.coerce.date(),
+  revoked: z.boolean(),
+});
+export type UserSession = z.infer<typeof UserSessionSchema>;
+
+export const AgentLaunchRequestSchema = z.object({
+  id: z.string(),
+  projectId: z.string(),
+  taskId: z.string(),
+  userId: z.string(),
+  agentType: z.string(),
+  status: AgentLaunchStatusSchema,
+  contextPackageId: z.string().nullable(),
+  createdAt: z.coerce.date(),
+  acceptedAt: z.coerce.date().nullable(),
+  expiredAt: z.coerce.date().nullable(),
+  agentSessionId: z.string().nullable(),
+});
+export type AgentLaunchRequest = z.infer<typeof AgentLaunchRequestSchema>;
+
+// ─── Realignment: Request Bodies ─────────────────────────────────────────────
+
+export const RegisterBodySchema = z.object({
+  name: z.string().min(1).max(100),
+  email: z.string().email(),
+  password: z.string().min(8).max(128),
+});
+export type RegisterBody = z.infer<typeof RegisterBodySchema>;
+
+export const LoginBodySchema = z.object({
+  email: z.string().email(),
+  password: z.string().min(1),
+});
+export type LoginBody = z.infer<typeof LoginBodySchema>;
+
+export const AddMemberBodySchema = z.object({
+  email: z.string().email(),
+  role: ProjectMemberRoleSchema.optional().default('MEMBER'),
+});
+export type AddMemberBody = z.infer<typeof AddMemberBodySchema>;
+
+export const UpdateMemberRoleBodySchema = z.object({
+  role: ProjectMemberRoleSchema,
+});
+export type UpdateMemberRoleBody = z.infer<typeof UpdateMemberRoleBodySchema>;
+
+export const CreateLaunchRequestBodySchema = z.object({
+  agentType: z.string().min(1).default('IBM_BOB'),
+  userId: z.string().min(1),
+});
+export type CreateLaunchRequestBody = z.infer<typeof CreateLaunchRequestBodySchema>;
+
+export const AcceptLaunchRequestBodySchema = z.object({
+  agentSessionId: z.string().optional(),
+});
+export type AcceptLaunchRequestBody = z.infer<typeof AcceptLaunchRequestBodySchema>;

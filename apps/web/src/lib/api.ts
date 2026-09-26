@@ -1,6 +1,7 @@
 /**
- * Server-side API client for the Arxion backend.
- * Used in Next.js Server Components and Server Actions.
+ * API client for the Arxion backend.
+ * apiFetch — server-side (no auth header, used in Server Components)
+ * authFetch — client-side (injects Bearer token, handles 401 → login redirect)
  */
 
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
@@ -26,16 +27,83 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   return json.data;
 }
 
+/**
+ * Client-side fetch that injects the stored JWT token.
+ * On 401 it redirects to /login.
+ */
+export async function authFetch<T>(path: string, options?: RequestInit): Promise<T> {
+  // Imported lazily to avoid SSR issues
+  const { getToken } = await import('@/lib/auth');
+  const token = getToken();
+
+  const url = `${API_BASE_URL}${path}`;
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...options?.headers,
+    },
+  });
+
+  if (res.status === 401) {
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
+    throw new Error('Unauthorized');
+  }
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API error ${res.status}: ${body}`);
+  }
+
+  const json = (await res.json()) as { success: boolean; data: T };
+  return json.data;
+}
+
 export const api = {
   projects: {
     list: () => apiFetch<import('@arxion/types').ProjectWithMembers[]>('/projects'),
     get: (id: string) => apiFetch<import('@arxion/types').ProjectWithMembers>(`/projects/${id}`),
+    addMember: (projectId: string, email: string, role = 'MEMBER') =>
+      authFetch<{ id: string }>(`/projects/${projectId}/members`, {
+        method: 'POST',
+        body: JSON.stringify({ email, role }),
+      }),
   },
   tasks: {
     listByProject: (projectId: string) =>
       apiFetch<import('@arxion/types').TaskWithRelations[]>(`/projects/${projectId}/tasks`),
     get: (taskId: string) =>
       apiFetch<import('@arxion/types').TaskWithRelations>(`/tasks/${taskId}`),
+    create: (
+      projectId: string,
+      body: {
+        title: string;
+        description?: string;
+        priority?: string;
+        acceptanceCriteria?: string[];
+        displayId?: string;
+      },
+    ) =>
+      authFetch<import('@arxion/types').TaskWithRelations>(`/projects/${projectId}/tasks`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    update: (taskId: string, body: Record<string, unknown>) =>
+      authFetch<import('@arxion/types').TaskWithRelations>(`/tasks/${taskId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    claim: (projectId: string, taskId: string, userId: string) =>
+      authFetch<import('@arxion/types').TaskWithRelations>(
+        `/projects/${projectId}/tasks/${taskId}/claim`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ userId }),
+        },
+      ),
   },
   activity: {
     listByProject: (projectId: string, limit = 30) =>
@@ -52,6 +120,37 @@ export const api = {
   coordination: {
     getRisks: (projectId: string) =>
       apiFetch<CoordinationRisk[]>(`/projects/${projectId}/coordination/risks`),
+    getSummary: (projectId: string) =>
+      authFetch<CoordinatorSummary>(`/projects/${projectId}/coordinator-summary`),
+    getReadiness: (taskId: string) =>
+      authFetch<TaskReadinessResult>(`/tasks/${taskId}/readiness`),
+    getHandoffs: (taskId: string) =>
+      authFetch<HandoffItem[]>(`/tasks/${taskId}/handoffs`),
+    getContextUpdates: (taskId: string) =>
+      authFetch<ContextUpdateItem[]>(`/tasks/${taskId}/context-updates`),
+    acknowledgeContextUpdate: (updateId: string) =>
+      authFetch<{ acknowledged: boolean }>(`/context-updates/${updateId}/acknowledge`, {
+        method: 'POST',
+      }),
+    acknowledgeHandoff: (handoffId: string) =>
+      authFetch<{ acknowledged: boolean }>(`/handoffs/${handoffId}/acknowledge`, {
+        method: 'POST',
+      }),
+    getParallelSafety: (projectId: string) =>
+      authFetch<ParallelSafetyResult>(`/projects/${projectId}/parallel-safety`),
+  },
+  launch: {
+    request: (projectId: string, taskId: string, body: { agentType: string; userId: string }) =>
+      authFetch<LaunchRequest>(`/projects/${projectId}/tasks/${taskId}/launch`, {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
+    accept: (requestId: string) =>
+      authFetch<LaunchRequest>(`/launch-requests/${requestId}/accept`, { method: 'POST' }),
+    cancel: (requestId: string) =>
+      authFetch<LaunchRequest>(`/launch-requests/${requestId}/cancel`, { method: 'POST' }),
+    listByProject: (projectId: string) =>
+      authFetch<LaunchRequest[]>(`/projects/${projectId}/launch-requests`),
   },
   // Phase 3
   reviews: {
@@ -126,6 +225,98 @@ export interface CoordinationRisk {
   affectedTaskId: string;
   affectedTaskDisplayId: string;
   affectedRelationship: string;
+}
+
+export interface LaunchRequest {
+  id: string;
+  projectId: string;
+  taskId: string;
+  requestedById: string;
+  agentType: string;
+  status: 'PENDING' | 'ACCEPTED' | 'CANCELLED' | 'EXPIRED';
+  createdAt: string;
+  acceptedAt: string | null;
+  task?: { id: string; displayId: string; title: string };
+}
+
+export interface TaskReadinessResult {
+  state:
+    | 'READY'
+    | 'AT_RISK'
+    | 'BLOCKED_BY_DEPENDENCY'
+    | 'WAITING_FOR_CONTEXT'
+    | 'INTERRUPTED';
+  reasons: string[];
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface HandoffItem {
+  id: string;
+  fromTaskId: string;
+  toTaskId: string | null;
+  type: string;
+  title: string;
+  content: string;
+  status: string;
+  createdAt: string;
+  fromTask?: { displayId: string; title: string };
+}
+
+export interface ContextUpdateItem {
+  id: string;
+  type: string;
+  title: string;
+  message: string;
+  status: string;
+  createdAt: string;
+  sourceTask?: { displayId: string; title: string } | null;
+}
+
+export interface CoordinatorSummary {
+  readyTasks: Array<{
+    id: string;
+    displayId: string;
+    title: string;
+    priority: string;
+    assignee: { name: string } | null;
+  }>;
+  waitingTasks: Array<{
+    id: string;
+    displayId: string;
+    title: string;
+    waitReason: string;
+  }>;
+  interruptedTasks: Array<{
+    id: string;
+    displayId: string;
+    title: string;
+    interruption: string;
+    recovery: string;
+  }>;
+  safeParallelGroups: Array<{
+    groupId: string;
+    tasks: Array<{ displayId: string; title: string }>;
+  }>;
+  highRisks: Array<{
+    id?: string;
+    title: string;
+    severity: string;
+    description: string;
+    affectedTasks?: string[];
+  }>;
+}
+
+export interface ParallelSafetyResult {
+  safeGroups: Array<{
+    groupId: string;
+    tasks: Array<{ id: string; displayId: string; title: string }>;
+  }>;
+  conflicts: Array<{
+    taskADisplayId: string;
+    taskBDisplayId: string;
+    reason: string;
+  }>;
 }
 
 // Phase 3 types

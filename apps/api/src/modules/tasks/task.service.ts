@@ -25,6 +25,7 @@ export async function createTask(
       priority: body.priority ?? 'MEDIUM',
       assigneeId: body.assigneeId ?? null,
       createdById,
+      acceptanceCriteria: body.acceptanceCriteria ?? [],
     },
     include: taskIncludes(),
   });
@@ -75,6 +76,7 @@ export async function updateTask(
       ...(body.status !== undefined && { status: body.status }),
       ...(body.priority !== undefined && { priority: body.priority }),
       ...(body.assigneeId !== undefined && { assigneeId: body.assigneeId }),
+      ...(body.acceptanceCriteria !== undefined && { acceptanceCriteria: body.acceptanceCriteria }),
     },
     include: taskIncludes(),
   });

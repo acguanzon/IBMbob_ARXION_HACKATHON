@@ -256,11 +256,12 @@ enum ProjectDecisionStatus {
 // ─── Models ──────────────────────────────────────────────────────────────────
 
 model User {
-  id        String   @id @default(cuid())
-  name      String
-  email     String   @unique
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   projectMemberships  ProjectMember[]
   createdProjects     Project[]              @relation("CreatedByUser")
@@ -273,6 +274,8 @@ model User {
   approvedReviews     Review[]               @relation("ApprovedReviews")
   reviewFindings      ReviewFinding[]
   projectDecisions    ProjectDecision[]      @relation("CreatedDecisions")
+  userSessions        UserSession[]
+  launchRequests      AgentLaunchRequest[]
 
   @@map("users")
 }
@@ -304,6 +307,8 @@ model Project {
   handoffs            TaskHandoff[]
   parallelSafetyEvals ParallelSafetyEvaluation[]
   agentCapabilities   AgentIntegrationCapability[]
+  // Realignment
+  launchRequests      AgentLaunchRequest[]
 
   @@map("projects")
 }
@@ -323,19 +328,20 @@ model ProjectMember {
 }
 
 model Task {
-  id          String       @id @default(cuid())
-  projectId   String
-  displayId   String
-  title       String
-  description String?
-  status      TaskStatus   @default(BACKLOG)
-  priority    TaskPriority @default(MEDIUM)
-  assigneeId  String?
-  createdById String
-  createdAt   DateTime     @default(now())
-  updatedAt   DateTime     @updatedAt
-  startedAt   DateTime?
-  completedAt DateTime?
+  id                 String       @id @default(cuid())
+  projectId          String
+  displayId          String
+  title              String
+  description        String?
+  status             TaskStatus   @default(BACKLOG)
+  priority           TaskPriority @default(MEDIUM)
+  assigneeId         String?
+  createdById        String
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  startedAt          DateTime?
+  completedAt        DateTime?
+  acceptanceCriteria String[]
 
   project           Project                @relation(fields: [projectId], references: [id], onDelete: Cascade)
   assignee          User?                  @relation("AssignedTasks", fields: [assigneeId], references: [id])
@@ -367,6 +373,7 @@ model Task {
   recoverySnapshots RecoverySnapshot[]
   parallelSafetyA   ParallelSafetyEvaluation[] @relation("ParallelSafetyA")
   parallelSafetyB   ParallelSafetyEvaluation[] @relation("ParallelSafetyB")
+  launchRequests    AgentLaunchRequest[]
 
   @@unique([projectId, displayId])
   @@map("tasks")
@@ -973,4 +980,52 @@ model AgentIntegrationCapability {
 
   @@unique([projectId, agentType])
   @@map("agent_integration_capabilities")
+}
+
+// ─── Realignment Enums ────────────────────────────────────────────────────────
+
+enum AgentLaunchStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+  CANCELLED
+  FAILED
+}
+
+// ─── Realignment Models ───────────────────────────────────────────────────────
+
+/// Auth session — token stored here, not in a cookie
+model UserSession {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_sessions")
+}
+
+/// Represents a request by a developer to launch an agent on a task.
+/// The agent polls for PENDING requests and accepts them to begin working.
+model AgentLaunchRequest {
+  id               String             @id @default(cuid())
+  projectId        String
+  taskId           String
+  userId           String
+  agentType        String
+  status           AgentLaunchStatus  @default(PENDING)
+  contextPackageId String?
+  createdAt        DateTime           @default(now())
+  acceptedAt       DateTime?
+  expiredAt        DateTime?
+  agentSessionId   String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task    Task    @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@map("agent_launch_requests")
 }

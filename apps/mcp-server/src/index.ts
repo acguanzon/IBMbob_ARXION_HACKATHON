@@ -2068,6 +2068,129 @@ ${riskLines}`,
   },
 );
 
+// ── Launch Queue Tools ────────────────────────────────────────────────────────
+
+server.registerTool(
+  'get_pending_launch_requests',
+  {
+    description: `Get all PENDING agent launch requests for a project.
+An agent should poll this at startup to check whether it has been asked to begin work on a task.
+Each request contains the task to work on, the requesting user, and a context package ID.`,
+    inputSchema: z.object({
+      project_id: z.string().describe('The project ID to check for pending launch requests'),
+    }),
+  },
+  async ({ project_id }) => {
+    try {
+      const response = await apiGet<{ success: boolean; data: Array<{
+        id: string;
+        taskId: string;
+        userId: string;
+        agentType: string;
+        status: string;
+        contextPackageId: string | null;
+        createdAt: string;
+        task: { id: string; displayId: string; title: string; status: string } | null;
+        user: { id: string; name: string; email: string } | null;
+      }> }>(`/projects/${encodeURIComponent(project_id)}/launch-requests`);
+
+      if (!response.success || response.data.length === 0) {
+        return { content: [{ type: 'text', text: `No pending launch requests for project ${project_id}.` }] };
+      }
+
+      const lines = response.data.map((r) =>
+        `[${r.id}] Task: ${r.task?.displayId ?? r.taskId} — ${r.task?.title ?? '?'}
+  Agent type: ${r.agentType}
+  Requested by: ${r.user?.name ?? r.userId} <${r.user?.email ?? ''}>
+  Context package: ${r.contextPackageId ?? 'none'}
+  Created: ${new Date(r.createdAt).toISOString()}`,
+      ).join('\n\n');
+
+      return {
+        content: [{
+          type: 'text',
+          text: `PENDING LAUNCH REQUESTS (${response.data.length}):\n\n${lines}\n\nCall accept_launch_request with the request ID to begin work.`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `get_pending_launch_requests failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'accept_launch_request',
+  {
+    description: `Accept a pending agent launch request and begin working on the task.
+This transitions the request to ACCEPTED and records the agent session ID.
+After accepting, call begin_task with the task ID to run the full coordination preflight.`,
+    inputSchema: z.object({
+      launch_request_id: z.string().describe('The launch request ID from get_pending_launch_requests'),
+      agent_session_id: z.string().optional().describe('Your current agent session ID (from begin_task if already called)'),
+    }),
+  },
+  async ({ launch_request_id, agent_session_id }) => {
+    try {
+      const response = await apiPost<{ success: boolean; data: {
+        id: string;
+        status: string;
+        acceptedAt: string | null;
+        task: { id: string; displayId: string; title: string } | null;
+        agentSessionId: string | null;
+      } }>(`/launch-requests/${encodeURIComponent(launch_request_id)}/accept`, {
+        agentSessionId: agent_session_id,
+      });
+
+      const req = response.data;
+      return {
+        content: [{
+          type: 'text',
+          text: `✅ Launch request ${launch_request_id} accepted.
+Task: ${req.task?.displayId ?? '?'} — ${req.task?.title ?? '?'}
+Task ID: ${req.task?.id ?? '?'}
+Status: ${req.status}
+Accepted at: ${req.acceptedAt ?? 'now'}
+
+Next step: call begin_task with task_id="${req.task?.id ?? req.task?.displayId ?? '?'}" to run the coordination preflight.`,
+        }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `accept_launch_request failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
+server.registerTool(
+  'reject_launch_request',
+  {
+    description: `Cancel/reject a pending agent launch request.
+Use when the agent cannot or should not work on the requested task.
+The request will be marked CANCELLED and the developer will need to re-launch.`,
+    inputSchema: z.object({
+      launch_request_id: z.string().describe('The launch request ID to cancel'),
+    }),
+  },
+  async ({ launch_request_id }) => {
+    try {
+      await apiPost(`/launch-requests/${encodeURIComponent(launch_request_id)}/cancel`, {});
+      return {
+        content: [{ type: 'text', text: `✅ Launch request ${launch_request_id} cancelled.` }],
+      };
+    } catch (error) {
+      return {
+        content: [{ type: 'text', text: `reject_launch_request failed: ${error instanceof Error ? error.message : String(error)}` }],
+        isError: true,
+      };
+    }
+  },
+);
+
 // ── Start ─────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {

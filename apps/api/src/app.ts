@@ -19,6 +19,8 @@ import { webhookRoutes } from './modules/webhooks/webhook.routes.js';
 import { phase4Routes } from './modules/phase4/phase4.routes.js';
 // Phase 5
 import { phase5Routes } from './modules/phase5/phase5.routes.js';
+import { authRoutes } from './modules/auth/auth.routes.js';
+import { launchRoutes } from './modules/launch/launch.routes.js';
 import { errorHandler } from './lib/error-handler.js';
 import { startStalenessWatcher } from './lib/staleness-watcher.js';
 import { realtimeEmitter } from './lib/realtime.js';
@@ -58,6 +60,9 @@ export async function buildApp() {
   await app.register(phase4Routes);
   // Phase 5
   await app.register(phase5Routes);
+  // Realignment
+  await app.register(authRoutes);
+  await app.register(launchRoutes);
 
   // Attach Socket.IO and start background jobs after server is ready
   app.addHook('onReady', () => {
