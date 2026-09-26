@@ -10,15 +10,21 @@ import type {
 } from '@arxion/types';
 import { emitEvent } from '../../lib/realtime.js';
 
+async function generateDisplayId(projectId: string): Promise<string> {
+  const count = await prisma.task.count({ where: { projectId } });
+  return `T-${count + 1}`;
+}
+
 export async function createTask(
   projectId: string,
   body: CreateTaskBody,
   createdById: string,
 ): Promise<TaskWithRelations> {
+  const displayId = body.displayId ?? (await generateDisplayId(projectId));
   const task = await prisma.task.create({
     data: {
       projectId,
-      displayId: body.displayId,
+      displayId,
       title: body.title,
       description: body.description ?? null,
       status: body.status ?? 'BACKLOG',

@@ -347,7 +347,7 @@ export const CreateProjectBodySchema = z.object({
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
 
 export const CreateTaskBodySchema = z.object({
-  displayId: z.string().min(1).max(20),
+  displayId: z.string().min(1).max(20).optional(),
   title: z.string().min(1).max(200),
   description: z.string().max(2000).optional(),
   status: TaskStatusSchema.optional().default('BACKLOG'),

@@ -28,10 +28,11 @@ export default function LoginPage() {
       const json = (await res.json()) as {
         success: boolean;
         data?: { token: string };
-        error?: string;
+        error?: { code: string; message: string } | string;
       };
       if (!res.ok || !json.success || !json.data?.token) {
-        setError(json.error ?? 'Login failed. Check your credentials.');
+        const errMsg = typeof json.error === 'object' ? json.error.message : (json.error ?? 'Login failed. Check your credentials.');
+        setError(errMsg);
         return;
       }
       await login(json.data.token);

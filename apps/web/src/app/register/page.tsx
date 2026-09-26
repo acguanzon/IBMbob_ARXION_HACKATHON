@@ -29,10 +29,11 @@ export default function RegisterPage() {
       const json = (await res.json()) as {
         success: boolean;
         data?: { token: string };
-        error?: string;
+        error?: { code: string; message: string } | string;
       };
       if (!res.ok || !json.success || !json.data?.token) {
-        setError(json.error ?? 'Registration failed. Try a different email.');
+        const errMsg = typeof json.error === 'object' ? json.error.message : (json.error ?? 'Registration failed. Try a different email.');
+        setError(errMsg);
         return;
       }
       await login(json.data.token);
