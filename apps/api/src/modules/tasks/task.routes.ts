@@ -11,6 +11,7 @@ import {
   listTasksByProject,
   getTaskById,
   updateTask,
+  deleteTask,
   claimTask,
   releaseTask,
   reportProgress,
@@ -26,9 +27,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     const { projectId } = req.params as { projectId: string };
     await requireProject(projectId);
     const body = CreateTaskBodySchema.parse(req.body);
-    const { prisma } = await import('@arxion/database');
-    const user = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' } });
-    const task = await createTask(projectId, body, user?.id ?? '');
+    const task = await createTask(projectId, body, req.user!.id);
     await reply.status(201).send({ success: true, data: task });
   });
 
@@ -63,10 +62,21 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
     await reply.status(200).send({ success: true, data: task });
   });
 
+  // DELETE /tasks/:taskId
+  app.delete('/tasks/:taskId', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { taskId } = req.params as { taskId: string };
+    const deleted = await deleteTask(taskId, req.user!.id);
+    if (!deleted) {
+      await reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: `Task not found: ${taskId}` } });
+      return;
+    }
+    await reply.status(200).send({ success: true, data: deleted });
+  });
+
   // POST /tasks/:taskId/claim
   app.post('/tasks/:taskId/claim', async (req: FastifyRequest, reply: FastifyReply) => {
     const { taskId } = req.params as { taskId: string };
-    const body = ClaimTaskBodySchema.parse(req.body);
+    const body = ClaimTaskBodySchema.parse({ ...(req.body as object), userId: req.user?.id ?? (req.body as { userId?: string }).userId });
     const result = await claimTask(taskId, body);
     if ('conflict' in result) {
       await reply.status(409).send({
@@ -81,7 +91,7 @@ export async function taskRoutes(app: FastifyInstance): Promise<void> {
   // POST /tasks/:taskId/release
   app.post('/tasks/:taskId/release', async (req: FastifyRequest, reply: FastifyReply) => {
     const { taskId } = req.params as { taskId: string };
-    const { userId } = req.body as { userId?: string };
+    const { userId = req.user?.id } = req.body as { userId?: string };
     if (!userId) {
       await reply.status(400).send({ success: false, error: { code: 'BAD_REQUEST', message: 'userId required' } });
       return;

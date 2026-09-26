@@ -346,7 +346,7 @@ Always call this before reserving files or declaring contracts.`,
       task_id: z.string().describe('Task ID (display ID like "T-102" or internal cuid)'),
       user_id: z.string().describe('Your user ID'),
       agent_type: z
-        .enum(['IBM_BOB', 'CURSOR', 'CLAUDE_CODE', 'OTHER'])
+        .enum(['IBM_BOB', 'CODEX', 'CURSOR', 'CLAUDE_CODE', 'OTHER'])
         .optional()
         .describe('Agent type (default: IBM_BOB)'),
     }),
@@ -2102,6 +2102,7 @@ Each request contains the task to work on, the requesting user, and a context pa
         `[${r.id}] Task: ${r.task?.displayId ?? r.taskId} — ${r.task?.title ?? '?'}
   Agent type: ${r.agentType}
   Requested by: ${r.user?.name ?? r.userId} <${r.user?.email ?? ''}>
+  Requesting user ID: ${r.userId}
   Context package: ${r.contextPackageId ?? 'none'}
   Created: ${new Date(r.createdAt).toISOString()}`,
       ).join('\n\n');
@@ -2139,6 +2140,9 @@ After accepting, call begin_task with the task ID to run the full coordination p
         status: string;
         acceptedAt: string | null;
         task: { id: string; displayId: string; title: string } | null;
+        user: { id: string; name: string; email: string } | null;
+        userId: string;
+        agentType: string;
         agentSessionId: string | null;
       } }>(`/launch-requests/${encodeURIComponent(launch_request_id)}/accept`, {
         agentSessionId: agent_session_id,
@@ -2151,10 +2155,11 @@ After accepting, call begin_task with the task ID to run the full coordination p
           text: `✅ Launch request ${launch_request_id} accepted.
 Task: ${req.task?.displayId ?? '?'} — ${req.task?.title ?? '?'}
 Task ID: ${req.task?.id ?? '?'}
+Requesting user ID: ${req.user?.id ?? req.userId}
 Status: ${req.status}
 Accepted at: ${req.acceptedAt ?? 'now'}
 
-Next step: call begin_task with task_id="${req.task?.id ?? req.task?.displayId ?? '?'}" to run the coordination preflight.`,
+Next step: call begin_task with task_id="${req.task?.id ?? req.task?.displayId ?? '?'}", user_id="${req.user?.id ?? req.userId}", and agent_type="${req.agentType}" to run the coordination preflight.`,
         }],
       };
     } catch (error) {

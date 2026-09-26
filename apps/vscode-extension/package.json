@@ -1,0 +1,84 @@
+{
+  "name": "arxion-vscode",
+  "displayName": "Arxion",
+  "description": "Task and coding-agent coordination for Arxion projects.",
+  "version": "0.1.0",
+  "publisher": "arxion-local",
+  "private": true,
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": ["onView:arxion.tasks", "onCommand:arxion.startTask"],
+  "main": "./dist/extension.js",
+  "scripts": {
+    "dev": "tsc --watch --preserveWatchOutput",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "package": "vsce package --no-dependencies"
+  },
+  "contributes": {
+    "commands": [
+      { "command": "arxion.configure", "title": "Arxion: Configure Workspace" },
+      { "command": "arxion.refresh", "title": "Arxion: Refresh Tasks", "icon": "$(refresh)" },
+      { "command": "arxion.startTask", "title": "Arxion: Start Task with Agent" },
+      { "command": "arxion.openDashboard", "title": "Arxion: Open Project Dashboard" }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        { "id": "arxion", "title": "Arxion", "icon": "resources/arxion.svg" }
+      ]
+    },
+    "views": {
+      "arxion": [
+        { "id": "arxion.tasks", "name": "Project Tasks" }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        { "command": "arxion.refresh", "when": "view == arxion.tasks", "group": "navigation" },
+        { "command": "arxion.configure", "when": "view == arxion.tasks", "group": "navigation" }
+      ],
+      "view/item/context": [
+        { "command": "arxion.startTask", "when": "view == arxion.tasks && viewItem == arxionTask", "group": "inline" }
+      ]
+    },
+    "configuration": {
+      "title": "Arxion",
+      "properties": {
+        "arxion.apiUrl": {
+          "type": "string",
+          "default": "http://localhost:3001",
+          "description": "Arxion API URL."
+        },
+        "arxion.bridgeUrl": {
+          "type": "string",
+          "default": "http://127.0.0.1:3210",
+          "description": "Local Arxion IDE bridge URL."
+        },
+        "arxion.dashboardUrl": {
+          "type": "string",
+          "default": "http://localhost:3000",
+          "description": "Arxion dashboard URL."
+        },
+        "arxion.projectId": {
+          "type": "string",
+          "default": "",
+          "description": "Arxion project ID associated with this workspace."
+        },
+        "arxion.userId": {
+          "type": "string",
+          "default": "",
+          "description": "Arxion user ID used for agent launch requests."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^20.16.5",
+    "@types/vscode": "^1.90.0",
+    "@vscode/vsce": "^3.2.1",
+    "typescript": "^5.5.4"
+  }
+}

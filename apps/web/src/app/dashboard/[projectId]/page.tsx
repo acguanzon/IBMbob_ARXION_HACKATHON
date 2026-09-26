@@ -1,4 +1,4 @@
-import { api } from '@/lib/api';
+import { serverApi as api } from '@/lib/server-api';
 import { Sidebar } from '@/components/Sidebar';
 import { ActivityPanel } from '@/components/ActivityPanel';
 import { RealtimeProvider } from '@/components/RealtimeProvider';
@@ -31,7 +31,7 @@ export default async function ProjectDashboardPage({ params }: ProjectPageProps)
 
   // Fetch tasks + per-task metadata in parallel
   let tasks: Awaited<ReturnType<typeof api.tasks.listByProject>> = [];
-  let taskMeta: Record<string, { activeFiles: number; contractRisks: number }> = {};
+  const taskMeta: Record<string, { activeFiles: number; contractRisks: number }> = {};
   let activeSessionCount = 0;
 
   if (project) {

@@ -21,7 +21,7 @@ export type ProjectMemberRole = z.infer<typeof ProjectMemberRoleSchema>;
 export const FileReservationStatusSchema = z.enum(['ACTIVE', 'RELEASED', 'CONFLICT', 'EXPIRED']);
 export type FileReservationStatus = z.infer<typeof FileReservationStatusSchema>;
 
-export const AgentTypeSchema = z.enum(['IBM_BOB', 'CURSOR', 'CLAUDE_CODE', 'OTHER']);
+export const AgentTypeSchema = z.enum(['IBM_BOB', 'CODEX', 'CURSOR', 'CLAUDE_CODE', 'OTHER']);
 export type AgentType = z.infer<typeof AgentTypeSchema>;
 
 export const AgentSessionStatusSchema = z.enum([

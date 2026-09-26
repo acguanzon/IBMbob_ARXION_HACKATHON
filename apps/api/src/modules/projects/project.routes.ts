@@ -8,26 +8,22 @@ import {
   requireProject,
 } from './project.service.js';
 import { authenticate } from '../../lib/auth-middleware.js';
+import { requireProjectRole } from '../../lib/guards.js';
 import { prisma } from '@arxion/database';
-
-// Temporary: use a hardcoded system user for Phase 1
-// Phase 2 will introduce proper authentication
-const SYSTEM_USER_ID_PLACEHOLDER = 'seed-maki-user';
 
 export async function projectRoutes(app: FastifyInstance): Promise<void> {
   // POST /projects
   app.post('/', async (request: FastifyRequest, reply: FastifyReply) => {
     const body = CreateProjectBodySchema.parse(request.body);
-    // Phase 1: derive createdById from the seed user
-    // TODO Phase 2: extract from auth context
-    const createdById = await resolveSystemUserId();
-    const project = await createProject(body, createdById);
+    const project = await createProject(body, request.user!.id);
     await reply.status(201).send({ success: true, data: project });
   });
 
   // GET /projects
-  app.get('/', async (_request: FastifyRequest, reply: FastifyReply) => {
-    const projects = await listProjects();
+  app.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
+    const projects = request.isInternalIntegration
+      ? await prisma.project.findMany({ include: { members: { include: { user: true } }, _count: { select: { tasks: true } } } })
+      : await listProjects(request.user!.id);
     await reply.status(200).send({ success: true, data: projects });
   });
 
@@ -56,6 +52,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
   app.post('/:projectId/members', { preHandler: authenticate }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { projectId } = request.params as { projectId: string };
     await requireProject(projectId);
+    await requireProjectRole(projectId, request.user!.id, ['OWNER']);
     const body = AddMemberBodySchema.parse(request.body);
 
     const user = await prisma.user.findUnique({ where: { email: body.email } });
@@ -90,6 +87,7 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
   app.patch('/:projectId/members/:memberId', { preHandler: authenticate }, async (request: FastifyRequest, reply: FastifyReply) => {
     const { projectId, memberId } = request.params as { projectId: string; memberId: string };
     await requireProject(projectId);
+    await requireProjectRole(projectId, request.user!.id, ['OWNER']);
     const body = UpdateMemberRoleBodySchema.parse(request.body);
 
     const member = await prisma.projectMember.update({
@@ -103,16 +101,13 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
 
   // DELETE /projects/:projectId/members/:memberId  — remove member
   app.delete('/:projectId/members/:memberId', { preHandler: authenticate }, async (request: FastifyRequest, reply: FastifyReply) => {
-    const { memberId } = request.params as { projectId: string; memberId: string };
-
+    const { projectId, memberId } = request.params as { projectId: string; memberId: string };
+    await requireProjectRole(projectId, request.user!.id, ['OWNER']);
+    const member = await prisma.projectMember.findFirst({ where: { id: memberId, projectId } });
+    if (!member) return reply.status(404).send({ success: false, error: { code: 'NOT_FOUND', message: 'Member not found in project' } });
+    if (member.userId === request.user!.id) return reply.status(400).send({ success: false, error: { code: 'OWNER_SELF_REMOVE', message: 'Owners cannot remove themselves' } });
     await prisma.projectMember.delete({ where: { id: memberId } });
 
     await reply.status(200).send({ success: true, data: { deleted: true } });
   });
-}
-
-// Helper: get the first seeded user id to stand in for auth during Phase 1
-async function resolveSystemUserId(): Promise<string> {
-  const user = await prisma.user.findFirst({ orderBy: { createdAt: 'asc' } });
-  return user?.id ?? SYSTEM_USER_ID_PLACEHOLDER;
 }

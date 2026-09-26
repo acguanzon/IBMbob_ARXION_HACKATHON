@@ -1,0 +1,8 @@
+{
+  "extends": ["../../.eslintrc.base.json"],
+  "rules": {
+    "@typescript-eslint/no-unnecessary-type-assertion": "off",
+    "@typescript-eslint/no-floating-promises": "off",
+    "@typescript-eslint/consistent-type-imports": "off"
+  }
+}

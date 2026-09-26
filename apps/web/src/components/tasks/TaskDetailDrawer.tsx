@@ -10,6 +10,7 @@ interface TaskDetailDrawerProps {
   projectId: string;
   onClose: () => void;
   onTaskUpdated: (task: TaskWithRelations) => void;
+  onTaskDeleted: (taskId: string) => void;
 }
 
 const READINESS_STYLE: Record<string, string> = {
@@ -43,22 +44,43 @@ function relTime(iso: string): string {
   return `${Math.floor(m / 60)}h ago`;
 }
 
-export function TaskDetailDrawer({ task, projectId, onClose, onTaskUpdated }: TaskDetailDrawerProps) {
+export function TaskDetailDrawer({
+  task,
+  projectId,
+  onClose,
+  onTaskUpdated,
+  onTaskDeleted,
+}: TaskDetailDrawerProps) {
   const [readiness, setReadiness] = useState<TaskReadinessResult | null>(null);
   const [handoffs, setHandoffs] = useState<HandoffItem[]>([]);
   const [contextUpdates, setContextUpdates] = useState<ContextUpdateItem[]>([]);
   const [editOpen, setEditOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const readinessBlockers = readiness?.blockers ?? (
+    readiness?.state === 'BLOCKED_BY_DEPENDENCY' ? readiness.reasons ?? [] : []
+  );
+  const readinessWarnings = readiness?.warnings ?? (
+    readiness && readiness.state !== 'READY' && readiness.state !== 'BLOCKED_BY_DEPENDENCY'
+      ? readiness.reasons ?? []
+      : []
+  );
 
   useEffect(() => {
+    setReadiness(null);
+    setHandoffs([]);
+    setContextUpdates([]);
+
     // Load readiness, handoffs, context updates in parallel (non-blocking)
     Promise.allSettled([
       api.coordination.getReadiness(task.id),
       api.coordination.getHandoffs(task.id),
       api.coordination.getContextUpdates(task.id),
     ]).then(([r, h, c]) => {
-      if (r.status === 'fulfilled') setReadiness(r.value);
-      if (h.status === 'fulfilled') setHandoffs(h.value);
-      if (c.status === 'fulfilled') setContextUpdates(c.value);
+      if (r.status === 'fulfilled' && r.value) setReadiness(r.value);
+      if (h.status === 'fulfilled' && Array.isArray(h.value)) setHandoffs(h.value);
+      if (c.status === 'fulfilled' && Array.isArray(c.value)) setContextUpdates(c.value);
     });
   }, [task.id]);
 
@@ -77,6 +99,23 @@ export function TaskDetailDrawer({ task, projectId, onClose, onTaskUpdated }: Ta
       setHandoffs((prev) => prev.filter((h) => h.id !== id));
     } catch {
       // non-fatal
+    }
+  }
+
+  async function deleteTask() {
+    const confirmed = window.confirm(
+      `Delete ${task.displayId} “${task.title}”? This permanently removes the task and its related task data.`,
+    );
+    if (!confirmed || deleting) return;
+
+    setDeleteError(null);
+    setDeleting(true);
+    try {
+      await api.tasks.remove(task.id);
+      onTaskDeleted(task.id);
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : 'Failed to delete task');
+      setDeleting(false);
     }
   }
 
@@ -113,6 +152,13 @@ export function TaskDetailDrawer({ task, projectId, onClose, onTaskUpdated }: Ta
             </h2>
           </div>
           <div className="ml-3 flex shrink-0 items-center gap-2">
+            <button
+              onClick={deleteTask}
+              disabled={deleting}
+              className="rounded-md bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-600 hover:bg-red-100 disabled:opacity-60"
+            >
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
             <button
               onClick={() => setEditOpen(true)}
               className="rounded-md bg-slate-100 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-200"
@@ -181,7 +227,7 @@ export function TaskDetailDrawer({ task, projectId, onClose, onTaskUpdated }: Ta
           </section>
 
           {/* Dependencies */}
-          {task.dependencies.length > 0 && (
+          {(task.dependencies?.length ?? 0) > 0 && (
             <section>
               <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Dependencies
@@ -204,18 +250,22 @@ export function TaskDetailDrawer({ task, projectId, onClose, onTaskUpdated }: Ta
           )}
 
           {/* Readiness reasons */}
-          {readiness && (readiness.blockers.length > 0 || readiness.warnings.length > 0) && (
+          {(readinessBlockers.length > 0 || readinessWarnings.length > 0) && (
             <section>
               <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
                 Readiness Details
               </h3>
-              {readiness.blockers.map((b, i) => (
+              {readinessBlockers.map((b, i) => (
                 <p key={i} className="text-sm text-red-600">⛔ {b}</p>
               ))}
-              {readiness.warnings.map((w, i) => (
+              {readinessWarnings.map((w, i) => (
                 <p key={i} className="text-sm text-yellow-600">⚠ {w}</p>
               ))}
             </section>
+          )}
+
+          {deleteError && (
+            <p className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-600">{deleteError}</p>
           )}
 
           {/* Pending Handoffs */}

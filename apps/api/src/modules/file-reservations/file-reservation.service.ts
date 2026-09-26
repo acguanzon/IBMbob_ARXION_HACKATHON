@@ -1,6 +1,6 @@
 import { prisma } from '@arxion/database';
 import type { ReserveFilesBody, ReleaseFilesBody, FileConflict } from '@arxion/types';
-import { normalizePath, normalizePaths } from '../../lib/normalize-path.js';
+import { normalizePaths } from '../../lib/normalize-path.js';
 import { emitEvent } from '../../lib/realtime.js';
 
 const DEFAULT_LEASE_SECONDS = 120;

@@ -33,8 +33,9 @@ export async function createProject(
   return project as ProjectWithMembers;
 }
 
-export async function listProjects(): Promise<ProjectWithMembers[]> {
+export async function listProjects(userId: string): Promise<ProjectWithMembers[]> {
   const projects = await prisma.project.findMany({
+    where: { members: { some: { userId } } },
     include: {
       members: {
         include: { user: true },

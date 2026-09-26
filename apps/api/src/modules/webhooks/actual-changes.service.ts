@@ -20,6 +20,7 @@ export interface ActualChangeInput {
   additions: number
   deletions: number
   previousFilePath?: string
+  content?: string
 }
 
 /**
@@ -92,8 +93,6 @@ async function detectScopeDeviation(
   if (!intent) return
 
   const declared = new Set(intent.files)
-  const actual = new Set(actualFiles)
-
   const unexpected = actualFiles.filter((f) => !declared.has(f))
   if (unexpected.length === 0) return
 

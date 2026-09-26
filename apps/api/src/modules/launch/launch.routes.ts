@@ -14,6 +14,7 @@ import {
   listPendingLaunchRequests,
   getLaunchRequest,
   acceptLaunchRequest,
+  startLaunchRequest,
   cancelLaunchRequest,
 } from './launch.service.js';
 
@@ -27,7 +28,7 @@ export async function launchRoutes(app: FastifyInstance): Promise<void> {
       const request = await createLaunchRequest({
         projectId,
         taskId,
-        userId: body.userId,
+        userId: req.user?.id ?? body.userId,
         agentType: body.agentType,
       });
       await reply.status(201).send({ success: true, data: request });
@@ -57,6 +58,14 @@ export async function launchRoutes(app: FastifyInstance): Promise<void> {
     const body = AcceptLaunchRequestBodySchema.parse(req.body ?? {});
     const request = await acceptLaunchRequest(id, body.agentSessionId);
     await reply.status(200).send({ success: true, data: request });
+  });
+
+  // POST /launch-requests/:id/start — preflight + create/bind the real agent session
+  app.post('/launch-requests/:id/start', async (req: FastifyRequest, reply: FastifyReply) => {
+    const { id } = req.params as { id: string };
+    const { externalAgentId } = (req.body ?? {}) as { externalAgentId?: string };
+    const result = await startLaunchRequest(id, externalAgentId);
+    await reply.status(200).send({ success: true, data: result });
   });
 
   // POST /launch-requests/:id/cancel

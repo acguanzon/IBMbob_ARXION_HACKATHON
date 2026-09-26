@@ -1,0 +1,4 @@
+node_modules
+dist
+.next
+packages/database/src/seed.ts

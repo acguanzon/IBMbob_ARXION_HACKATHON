@@ -5,6 +5,7 @@ import type {
   CoordinationPreflight,
   FileConflict,
   ContractRisk,
+  AgentType,
 } from '@arxion/types';
 import { normalizePaths } from '../../lib/normalize-path.js';
 import { emitEvent } from '../../lib/realtime.js';
@@ -24,7 +25,7 @@ void DEFAULT_LEASE_SECONDS; // reserved for future use
 export async function beginTask(
   taskId: string,
   userId: string,
-  agentType: 'IBM_BOB' | 'CURSOR' | 'CLAUDE_CODE' | 'OTHER' = 'IBM_BOB',
+  agentType: AgentType = 'IBM_BOB',
   externalAgentId?: string,
 ): Promise<CoordinationPreflight> {
   // Resolve task
@@ -109,7 +110,7 @@ export async function beginTask(
     userName: s.user.name,
     taskId: s.taskId!,
     taskDisplayId: s.task?.displayId ?? s.taskId!,
-    agentType: s.agentType as 'IBM_BOB' | 'CURSOR' | 'CLAUDE_CODE' | 'OTHER',
+    agentType: s.agentType as AgentType,
     status: s.status as 'IDLE' | 'WORKING' | 'WAITING' | 'FINISHED' | 'STALE',
   }));
 

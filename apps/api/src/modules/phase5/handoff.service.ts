@@ -38,8 +38,21 @@ export async function createHandoffsForCompletedTask(taskId: string): Promise<vo
   })
   if (!task) return
 
-  // Find all downstream tasks (tasks that depend on this one)
-  const downstreamTasks = task.dependents.map((d) => d.task)
+  const providedContracts = await prisma.taskContract.findMany({
+    where: { taskId: task.id, relationship: { in: ['PROVIDES', 'MODIFIES'] } },
+    select: { name: true, type: true },
+  })
+  const contractConsumers = providedContracts.length === 0 ? [] : await prisma.task.findMany({
+    where: {
+      projectId: task.projectId,
+      id: { not: task.id },
+      contracts: { some: { relationship: 'CONSUMES', OR: providedContracts.map((contract) => ({ name: contract.name, type: contract.type })) } },
+    },
+    select: { id: true, displayId: true, title: true, status: true },
+  })
+  const downstreamTasks = [...new Map(
+    [...task.dependents.map((d) => d.task), ...contractConsumers].map((target) => [target.id, target]),
+  ).values()]
 
   for (const target of downstreamTasks) {
     // Skip already-done targets

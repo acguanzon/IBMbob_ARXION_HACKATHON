@@ -69,6 +69,7 @@ export interface IGitProvider {
   getPullRequestFiles(owner: string, repo: string, prNumber: number): Promise<GitFile[]>
   getMergeStatus(owner: string, repo: string, prNumber: number): Promise<'open' | 'closed' | 'merged'>
   getBranchComparison(owner: string, repo: string, base: string, head: string): Promise<GitBranchComparison>
+  getFileContent(owner: string, repo: string, path: string, revision: string): Promise<string>
 }
 
 // ─── GitHub Provider ──────────────────────────────────────────────────────────
@@ -227,6 +228,14 @@ export class GitHubProvider implements IGitProvider {
       mergeBase: data.merge_base_commit?.sha ?? null,
       files: (data.files ?? []).map(this.normalizeFile),
     }
+  }
+
+  async getFileContent(owner: string, repo: string, path: string, revision: string): Promise<string> {
+    const data = await this.request<{ content: string; encoding: string }>(
+      `/repos/${owner}/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}?ref=${encodeURIComponent(revision)}`,
+    )
+    if (data.encoding !== 'base64') throw new Error(`Unsupported GitHub content encoding: ${data.encoding}`)
+    return Buffer.from(data.content.replace(/\n/g, ''), 'base64').toString('utf8')
   }
 
   private normalizeFile(f: {

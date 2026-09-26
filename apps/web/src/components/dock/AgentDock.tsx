@@ -16,14 +16,30 @@ interface AgentDockProps {
 
 const AGENT_TYPES = [
   { value: 'IBM_BOB', label: 'IBM Bob' },
+  { value: 'CODEX', label: 'Codex' },
   { value: 'CURSOR', label: 'Cursor' },
   { value: 'CLAUDE_CODE', label: 'Claude Code' },
 ] as const;
 
 type AgentTypeValue = (typeof AGENT_TYPES)[number]['value'];
 
-const COPY_TEMPLATE = (displayId: string) =>
-  `Work on Arxion task ${displayId}. Accept my pending launch request and retrieve the current context package.`;
+const BRIDGE_URL = process.env['NEXT_PUBLIC_IDE_BRIDGE_URL'] ?? 'http://127.0.0.1:3210';
+
+interface BridgeCapability {
+  available: boolean;
+  directLaunch: boolean;
+  lifecycle: boolean;
+  mode: string;
+}
+
+interface BridgeCapabilities {
+  agents: Partial<Record<AgentTypeValue, BridgeCapability>>;
+}
+
+const COPY_TEMPLATE = (request: LaunchRequest, displayId: string) =>
+  `Work on Arxion task ${displayId} in project ${request.projectId}. ` +
+  `Accept launch request ${request.id}, then call begin_task with task_id="${request.taskId}", ` +
+  `user_id="${request.userId}", and agent_type="${request.agentType}". Retrieve and follow the current context package.`;
 
 export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
   const { user } = useAuth();
@@ -33,6 +49,7 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [minimised, setMinimised] = useState(false);
+  const [bridgeCapabilities, setBridgeCapabilities] = useState<BridgeCapabilities | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const { setNodeRef, isOver } = useDroppable({ id: 'agent-dock' });
@@ -51,9 +68,11 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
       if (pollRef.current) clearInterval(pollRef.current);
       pollRef.current = setInterval(async () => {
         try {
-          const requests = await api.launch.listByProject(projectId);
-          const req = requests.find((r) => r.id === requestId);
-          if (req?.status === 'ACCEPTED') {
+          const req = await api.launch.get(requestId);
+          if (req.status === 'ACCEPTED') {
+            setPendingRequest(req);
+            if (pollRef.current) clearInterval(pollRef.current);
+          } else if (req.status !== 'PENDING') {
             setPendingRequest(req);
             if (pollRef.current) clearInterval(pollRef.current);
           }
@@ -62,8 +81,20 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
         }
       }, 3000);
     },
-    [projectId],
+    [],
   );
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetch(`${BRIDGE_URL}/capabilities`, { signal: controller.signal })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Bridge unavailable');
+        return (await response.json()) as BridgeCapabilities;
+      })
+      .then(setBridgeCapabilities)
+      .catch(() => setBridgeCapabilities(null));
+    return () => controller.abort();
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -85,6 +116,22 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
       });
       setPendingRequest(req);
       startPolling(req.id);
+
+      const directCapability = bridgeCapabilities?.agents[agentType];
+      if (directCapability?.available && directCapability.directLaunch) {
+        const response = await fetch(`${BRIDGE_URL}/launch`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ launchRequestId: req.id }),
+        });
+        if (!response.ok) {
+          const payload = (await response.json().catch(() => ({}))) as { error?: string };
+          throw new Error(
+            `${payload.error ?? 'The IDE bridge could not start the agent'}. The launch request is still available for manual handoff.`,
+          );
+        }
+        setPendingRequest(await api.launch.get(req.id));
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to launch agent');
     } finally {
@@ -105,8 +152,8 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
   }
 
   function handleCopy() {
-    if (!droppedTask) return;
-    const text = COPY_TEMPLATE(droppedTask.displayId);
+    if (!droppedTask || !pendingRequest) return;
+    const text = COPY_TEMPLATE(pendingRequest, droppedTask.displayId);
     navigator.clipboard.writeText(text).then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
@@ -114,7 +161,12 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
   }
 
   const isAccepted = pendingRequest?.status === 'ACCEPTED';
+  const isWorking = isAccepted && Boolean(pendingRequest.agentSessionId);
   const isPending = pendingRequest?.status === 'PENDING';
+  const directCapability = bridgeCapabilities?.agents[agentType];
+  const directLaunchAvailable = Boolean(
+    directCapability?.available && directCapability.directLaunch,
+  );
 
   if (minimised) {
     return (
@@ -135,7 +187,7 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
         <div className="flex items-center gap-1.5">
           <span className="text-base">🤖</span>
           <span className="text-xs font-semibold text-slate-700">Agent Dock</span>
-          {isAccepted && (
+          {isWorking && (
             <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-xs text-emerald-700">
               WORKING
             </span>
@@ -171,6 +223,11 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
             ))}
           </select>
         </div>
+        <p className="text-[11px] text-slate-400">
+          {directLaunchAvailable
+            ? `${AGENT_TYPES.find((a) => a.value === agentType)?.label} can be launched directly.`
+            : 'Manual handoff is available; start the IDE bridge for direct Codex launch.'}
+        </p>
 
         {/* Drop zone */}
         {!droppedTask ? (
@@ -205,10 +262,15 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
                 ⏳ Waiting for agent to accept…
               </p>
             )}
-            {isAccepted && (
+            {isWorking && (
               <p className="mt-1.5 flex items-center gap-1 text-xs text-emerald-600">
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
                 Agent working on this task
+              </p>
+            )}
+            {isAccepted && !isWorking && (
+              <p className="mt-1.5 text-xs text-blue-600">
+                Agent accepted; waiting for a bound work session…
               </p>
             )}
 
@@ -219,7 +281,11 @@ export function AgentDock({ projectId, droppedTask, onClear }: AgentDockProps) {
                 disabled={launching}
                 className="mt-2 w-full rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
               >
-                {launching ? 'Launching…' : `Launch ${AGENT_TYPES.find((a) => a.value === agentType)?.label}`}
+                {launching
+                  ? 'Launching…'
+                  : directLaunchAvailable
+                    ? `Start ${AGENT_TYPES.find((a) => a.value === agentType)?.label}`
+                    : `Create ${AGENT_TYPES.find((a) => a.value === agentType)?.label} handoff`}
               </button>
             )}
 

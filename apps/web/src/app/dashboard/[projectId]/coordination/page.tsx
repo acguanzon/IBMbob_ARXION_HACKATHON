@@ -1,4 +1,4 @@
-import { api } from '@/lib/api';
+import { serverApi as api } from '@/lib/server-api';
 import { Sidebar } from '@/components/Sidebar';
 import { RealtimeProvider } from '@/components/RealtimeProvider';
 import { CoordinationPageClient } from '@/components/coordination/CoordinationPageClient';

@@ -10,6 +10,7 @@ import { createHash, createHmac, timingSafeEqual } from 'crypto'
 import { prisma } from '@arxion/database'
 import { emitEvent } from '../../lib/realtime.js'
 import { processActualChanges } from './actual-changes.service.js'
+import { createGitHubProvider } from '../../lib/git-provider.js'
 
 // ─── Signature Verification ───────────────────────────────────────────────────
 
@@ -116,7 +117,7 @@ export async function processGitHubWebhook(options: {
     const payload = JSON.parse(rawPayload.toString('utf8')) as unknown
 
     if (eventType === 'push') {
-      await handlePushEvent(repo.projectId, repositoryId, payload as GitHubPushPayload)
+      await handlePushEvent(repo.projectId, repositoryId, payload as GitHubPushPayload, repo.owner, repo.repository)
     }
 
     // 7. Mark as PROCESSED
@@ -142,6 +143,8 @@ async function handlePushEvent(
   projectId: string,
   repositoryId: string,
   payload: GitHubPushPayload,
+  owner: string,
+  repositoryName: string,
 ): Promise<void> {
   const branchRef = payload.ref // refs/heads/<branch>
   const branchName = branchRef.startsWith('refs/heads/')
@@ -195,16 +198,20 @@ async function handlePushEvent(
   })
 
   // Run the actual change analysis pipeline
+  const provider = createGitHubProvider()
+  const filesWithContent = await Promise.all(Array.from(fileMap.entries()).map(async ([path, changeType]) => {
+    let content: string | undefined
+    if (changeType !== 'DELETED' && /\.(?:ts|tsx|prisma)$/.test(path)) {
+      try { content = await provider.getFileContent(owner, repositoryName, path, commitSha) } catch { content = undefined }
+    }
+    return { filePath: path, changeType, additions: 0, deletions: 0, content }
+  }))
+
   await processActualChanges({
     projectId,
     taskId: gitLink.task.id,
     repositoryId,
     commitSha,
-    files: Array.from(fileMap.entries()).map(([path, changeType]) => ({
-      filePath: path,
-      changeType,
-      additions: 0,
-      deletions: 0,
-    })),
+    files: filesWithContent,
   })
 }

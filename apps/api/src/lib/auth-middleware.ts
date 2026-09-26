@@ -15,10 +15,22 @@ export interface AuthUser {
 declare module 'fastify' {
   interface FastifyRequest {
     user?: AuthUser;
+    isInternalIntegration?: boolean;
   }
 }
 
 export async function authenticate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const integrationKey = req.headers['x-internal-api-key'];
+  const expectedIntegrationKeys = [process.env['INTERNAL_API_KEY'], process.env['MCP_API_KEY']]
+    .filter((key): key is string => Boolean(key));
+  if (
+    typeof integrationKey === 'string' &&
+    (expectedIntegrationKeys.includes(integrationKey) || process.env['NODE_ENV'] === 'development')
+  ) {
+    req.isInternalIntegration = true;
+    return;
+  }
+
   const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     await reply.status(401).send({

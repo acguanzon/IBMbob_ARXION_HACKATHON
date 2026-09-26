@@ -6,6 +6,7 @@ import type { ProjectWithMembers } from '@arxion/types';
 import { useAuth } from '@/context/AuthContext';
 import { AddMemberModal } from '@/components/members/AddMemberModal';
 import { useState } from 'react';
+import { CreateProjectModal } from '@/components/projects/CreateProjectModal';
 
 interface SidebarProps {
   projects: ProjectWithMembers[];
@@ -17,6 +18,7 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
   const { user, logout } = useAuth();
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const [showAddMember, setShowAddMember] = useState(false);
+  const [showCreateProject, setShowCreateProject] = useState(false);
 
   return (
     <aside className="flex w-60 flex-col border-r border-slate-200 bg-white">
@@ -88,9 +90,10 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
 
       {/* Projects */}
       <div className="px-3 pt-4">
-        <p className="mb-2 px-1 text-xs font-semibold uppercase tracking-wider text-slate-400">
-          Projects
-        </p>
+        <div className="mb-2 flex items-center justify-between px-1">
+          <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Projects</p>
+          <button onClick={() => setShowCreateProject(true)} className="rounded px-1.5 py-0.5 text-xs text-blue-600 hover:bg-blue-50" title="Create project">+ New</button>
+        </div>
         <ul className="space-y-0.5">
           {projects.map((project) => (
             <li key={project.id}>
@@ -172,6 +175,9 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
           projectId={activeProject.id}
           onClose={() => setShowAddMember(false)}
         />
+      )}
+      {showCreateProject && (
+        <CreateProjectModal onClose={() => setShowCreateProject(false)} />
       )}
     </aside>
   );

@@ -91,6 +91,37 @@ export async function updateTask(
   return task as TaskWithRelations;
 }
 
+export async function deleteTask(
+  taskId: string,
+  deletedById: string,
+): Promise<{ id: string; displayId: string; projectId: string } | null> {
+  const existing = await prisma.task.findFirst({
+    where: { OR: [{ id: taskId }, { displayId: taskId }] },
+    select: { id: true, displayId: true, title: true, projectId: true },
+  });
+  if (!existing) return null;
+
+  await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+    // Preserve project history and sessions while removing their task reference.
+    await tx.agentSession.updateMany({ where: { taskId: existing.id }, data: { taskId: null } });
+    await tx.taskActivity.updateMany({ where: { taskId: existing.id }, data: { taskId: null } });
+    await tx.projectDecision.updateMany({ where: { taskId: existing.id }, data: { taskId: null } });
+
+    await tx.task.delete({ where: { id: existing.id } });
+    await tx.taskActivity.create({
+      data: {
+        projectId: existing.projectId,
+        userId: deletedById,
+        type: 'task.deleted',
+        message: `Task ${existing.displayId} "${existing.title}" was deleted.`,
+        metadata: { deletedTaskId: existing.id, displayId: existing.displayId },
+      },
+    });
+  });
+
+  return { id: existing.id, displayId: existing.displayId, projectId: existing.projectId };
+}
+
 /**
  * Atomically claim a task. Uses a transaction + unique constraint to prevent
  * two users claiming the same task simultaneously.

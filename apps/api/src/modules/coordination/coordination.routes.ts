@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { DeclareWorkIntentBodySchema, DeclareContractBodySchema } from '@arxion/types';
+import type { AgentType } from '@arxion/types';
 import {
   beginTask,
   declareWorkIntent,
@@ -17,7 +18,7 @@ export async function coordinationRoutes(app: FastifyInstance): Promise<void> {
     const { taskId, userId, agentType, externalAgentId } = req.body as {
       taskId: string;
       userId: string;
-      agentType?: 'IBM_BOB' | 'CURSOR' | 'CLAUDE_CODE' | 'OTHER';
+      agentType?: AgentType;
       externalAgentId?: string;
     };
 

@@ -4,7 +4,7 @@ import type {
   ActivityItemWithRelations,
   CoordinationRisk,
 } from '@/lib/api';
-import { api } from '@/lib/api';
+import { serverApi as api } from '@/lib/server-api';
 import type { ProjectWithMembers } from '@arxion/types';
 
 interface ActivityPanelProps {
@@ -13,6 +13,7 @@ interface ActivityPanelProps {
 
 const AGENT_TYPE_LABELS: Record<string, string> = {
   IBM_BOB: 'IBM Bob',
+  CODEX: 'Codex',
   CURSOR: 'Cursor',
   CLAUDE_CODE: 'Claude Code',
   OTHER: 'Agent',

@@ -6,12 +6,28 @@
 
 const API_BASE_URL = process.env['NEXT_PUBLIC_API_URL'] ?? 'http://localhost:3001';
 
+function unwrapResponse<T>(json: unknown): T {
+  if (
+    typeof json === 'object' &&
+    json !== null &&
+    'data' in json &&
+    'success' in json
+  ) {
+    return (json as { data: T }).data;
+  }
+
+  return json as T;
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
   const res = await fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...(typeof window !== 'undefined' && localStorage.getItem('arxion_token')
+        ? { Authorization: `Bearer ${localStorage.getItem('arxion_token')}` }
+        : {}),
       ...options?.headers,
     },
     // Disable Next.js default caching for data freshness in dashboard
@@ -23,8 +39,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
     throw new Error(`API error ${res.status}: ${body}`);
   }
 
-  const json = (await res.json()) as { success: boolean; data: T };
-  return json.data;
+  return unwrapResponse<T>(await res.json());
 }
 
 /**
@@ -58,14 +73,18 @@ export async function authFetch<T>(path: string, options?: RequestInit): Promise
     throw new Error(`API error ${res.status}: ${body}`);
   }
 
-  const json = (await res.json()) as { success: boolean; data: T };
-  return json.data;
+  return unwrapResponse<T>(await res.json());
 }
 
 export const api = {
   projects: {
     list: () => apiFetch<import('@arxion/types').ProjectWithMembers[]>('/projects'),
     get: (id: string) => apiFetch<import('@arxion/types').ProjectWithMembers>(`/projects/${id}`),
+    create: (body: { name: string; description?: string; repositoryUrl?: string }) =>
+      authFetch<import('@arxion/types').ProjectWithMembers>('/projects', {
+        method: 'POST',
+        body: JSON.stringify(body),
+      }),
     addMember: (projectId: string, email: string, role = 'MEMBER') =>
       authFetch<{ id: string }>(`/projects/${projectId}/members`, {
         method: 'POST',
@@ -95,6 +114,11 @@ export const api = {
       authFetch<import('@arxion/types').TaskWithRelations>(`/tasks/${taskId}`, {
         method: 'PATCH',
         body: JSON.stringify(body),
+      }),
+    remove: (taskId: string) =>
+      authFetch<{ id: string; displayId: string }>(`/tasks/${taskId}`, {
+        method: 'DELETE',
+        body: JSON.stringify({}),
       }),
     claim: (projectId: string, taskId: string, userId: string) =>
       authFetch<import('@arxion/types').TaskWithRelations>(
@@ -146,9 +170,17 @@ export const api = {
         body: JSON.stringify(body),
       }),
     accept: (requestId: string) =>
-      authFetch<LaunchRequest>(`/launch-requests/${requestId}/accept`, { method: 'POST' }),
+      authFetch<LaunchRequest>(`/launch-requests/${requestId}/accept`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
     cancel: (requestId: string) =>
-      authFetch<LaunchRequest>(`/launch-requests/${requestId}/cancel`, { method: 'POST' }),
+      authFetch<LaunchRequest>(`/launch-requests/${requestId}/cancel`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    get: (requestId: string) =>
+      authFetch<LaunchRequest>(`/launch-requests/${requestId}`),
     listByProject: (projectId: string) =>
       authFetch<LaunchRequest[]>(`/projects/${projectId}/launch-requests`),
   },
@@ -231,11 +263,12 @@ export interface LaunchRequest {
   id: string;
   projectId: string;
   taskId: string;
-  requestedById: string;
+  userId: string;
   agentType: string;
-  status: 'PENDING' | 'ACCEPTED' | 'CANCELLED' | 'EXPIRED';
+  status: 'PENDING' | 'ACCEPTED' | 'CANCELLED' | 'EXPIRED' | 'FAILED';
   createdAt: string;
   acceptedAt: string | null;
+  agentSessionId: string | null;
   task?: { id: string; displayId: string; title: string };
 }
 
@@ -247,8 +280,8 @@ export interface TaskReadinessResult {
     | 'WAITING_FOR_CONTEXT'
     | 'INTERRUPTED';
   reasons: string[];
-  blockers: string[];
-  warnings: string[];
+  blockers?: string[];
+  warnings?: string[];
 }
 
 export interface HandoffItem {

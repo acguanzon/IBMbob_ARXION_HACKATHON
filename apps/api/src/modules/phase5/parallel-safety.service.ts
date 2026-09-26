@@ -111,18 +111,18 @@ export async function evaluateParallelSafety(
   }
 
   // ─── 4. Code entity overlap (MODEL/SCHEMA) ───────────────────────────────
-  const [entitiesA, entitiesB] = await Promise.all([
-    prisma.codeEntity.findMany({
-      where: { outgoingRelations: { some: { sourceEntityId: { not: '' } } } },
-      select: { id: true, name: true, type: true, filePath: true },
-      take: 0, // placeholder — need to scope by task
-    }),
-    Promise.resolve([]),
-  ])
-  // Note: code entities aren't directly scoped to a task in Phase 4 schema —
-  // they're scoped to projectId + filePath. Check by file overlap instead (done above).
-  void entitiesA
-  void entitiesB
+  const entityStore = prisma.taskCodeEntity
+  const [entitiesA, entitiesB] = entityStore ? await Promise.all([
+    entityStore.findMany({ where: { taskId: taskA.id }, select: { entityId: true, entity: { select: { name: true } } } }),
+    entityStore.findMany({ where: { taskId: taskB.id }, select: { entityId: true, entity: { select: { name: true } } } }),
+  ]) : [[], []]
+  const idsB = new Set(entitiesB.map((entry) => entry.entityId))
+  const sharedEntities = entitiesA.filter((entry) => idsB.has(entry.entityId))
+  if (sharedEntities.length > 0) {
+    state = 'UNSAFE'
+    reasons.push(`Shared code entit${sharedEntities.length === 1 ? 'y' : 'ies'}: ${sharedEntities.slice(0, 5).map((entry) => entry.entity.name).join(', ')}`)
+    return persist(taskA.id, taskB.id, taskA.projectId, state, reasons, warnings)
+  }
 
   // ─── 5. Active coordination risks between this pair ───────────────────────
   const crossRisks = await prisma.coordinationRisk.findMany({

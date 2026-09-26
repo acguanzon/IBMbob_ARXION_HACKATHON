@@ -12,6 +12,7 @@
  * - Delta shows what changed since the snapshot was taken
  */
 import { prisma, Prisma } from '@arxion/database'
+import type { AgentType } from '@arxion/types'
 import { emitEvent } from '../../lib/realtime.js'
 import { buildContextPackage } from './context-package.service.js'
 
@@ -140,7 +141,7 @@ export async function resumeTask(opts: {
       projectId: task.projectId,
       userId,
       taskId: task.id,
-      agentType: agentType as 'IBM_BOB' | 'CURSOR' | 'CLAUDE_CODE' | 'OTHER',
+      agentType: agentType as AgentType,
       status: 'WORKING',
     },
   })

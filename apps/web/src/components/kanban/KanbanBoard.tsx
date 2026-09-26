@@ -119,6 +119,12 @@ export function KanbanBoard({ tasks: initialTasks, projectId, taskMeta = {} }: K
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
   }
 
+  function handleTaskDeleted(taskId: string) {
+    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+    setSelectedTask(null);
+    setDrawerOpen(false);
+  }
+
   const tasksByStatus = Object.fromEntries(
     COLUMNS.map((col) => [col.status, tasks.filter((t) => t.status === col.status)]),
   ) as Record<TaskStatus, TaskWithRelations[]>;
@@ -186,6 +192,7 @@ export function KanbanBoard({ tasks: initialTasks, projectId, taskMeta = {} }: K
           projectId={projectId}
           onClose={() => setDrawerOpen(false)}
           onTaskUpdated={handleTaskUpdated}
+          onTaskDeleted={handleTaskDeleted}
         />
       )}
 

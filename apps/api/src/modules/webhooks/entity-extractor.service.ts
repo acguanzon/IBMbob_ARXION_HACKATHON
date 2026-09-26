@@ -110,7 +110,7 @@ export async function extractEntitiesFromFiles(opts: {
   repositoryId: string
   files: ActualChangeInput[]
 }): Promise<void> {
-  const { projectId, files } = opts
+  const { projectId, taskId, repositoryId, files } = opts
 
   for (const file of files) {
     if (file.changeType === 'DELETED') {
@@ -125,7 +125,7 @@ export async function extractEntitiesFromFiles(opts: {
 
     for (const entity of entities) {
       // Upsert by unique constraint: projectId + filePath + name + type
-      await prisma.codeEntity.upsert({
+      const stored = await prisma.codeEntity.upsert({
         where: {
           projectId_filePath_name_type: {
             projectId,
@@ -143,9 +143,38 @@ export async function extractEntitiesFromFiles(opts: {
         },
         update: {
           symbolName: entity.symbolName ?? null,
+          repositoryId,
         },
       })
+      if (prisma.taskCodeEntity) {
+        await prisma.taskCodeEntity.upsert({
+          where: { taskId_entityId: { taskId, entityId: stored.id } },
+          create: { projectId, taskId, entityId: stored.id },
+          update: { lastSeenAt: new Date() },
+        })
+      }
     }
+
+    if (content) await persistImportRelationships(projectId, file.filePath, content)
+  }
+}
+
+async function persistImportRelationships(projectId: string, filePath: string, content: string): Promise<void> {
+  const source = await prisma.codeEntity.findFirst({ where: { projectId, filePath, type: 'FILE' } })
+  if (!source) return
+  const names = new Set<string>()
+  for (const match of content.matchAll(/import\s+(?:type\s+)?\{([^}]+)\}\s+from/g)) {
+    for (const part of match[1]!.split(',')) names.add(part.trim().split(/\s+as\s+/)[0]!)
+  }
+  if (names.size === 0) return
+  const targets = await prisma.codeEntity.findMany({ where: { projectId, name: { in: [...names] } } })
+  for (const target of targets) {
+    if (target.id === source.id) continue
+    await prisma.codeRelationship.upsert({
+      where: { sourceEntityId_targetEntityId_relationship: { sourceEntityId: source.id, targetEntityId: target.id, relationship: 'IMPORTS' } },
+      create: { projectId, sourceEntityId: source.id, targetEntityId: target.id, relationship: 'IMPORTS', confidence: 'HIGH', source: 'DETERMINISTIC' },
+      update: { confidence: 'HIGH' },
+    })
   }
 }
 

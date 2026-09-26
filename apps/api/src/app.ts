@@ -20,6 +20,8 @@ import { phase4Routes } from './modules/phase4/phase4.routes.js';
 // Phase 5
 import { phase5Routes } from './modules/phase5/phase5.routes.js';
 import { authRoutes } from './modules/auth/auth.routes.js';
+import { authenticate } from './lib/auth-middleware.js';
+import { requireRequestProjectAccess } from './lib/guards.js';
 import { launchRoutes } from './modules/launch/launch.routes.js';
 import { errorHandler } from './lib/error-handler.js';
 import { startStalenessWatcher } from './lib/staleness-watcher.js';
@@ -39,6 +41,20 @@ export async function buildApp() {
   });
 
   app.setErrorHandler(errorHandler);
+
+  app.addHook('preHandler', async (request, reply) => {
+    const path = request.url.split('?')[0] ?? request.url;
+    if (
+      path === '/health' ||
+      path === '/auth/login' ||
+      path === '/auth/register' ||
+      path.startsWith('/webhooks/') ||
+      path.startsWith('/socket.io/')
+    ) return;
+    await authenticate(request, reply);
+    if (reply.sent) return;
+    await requireRequestProjectAccess(request);
+  });
 
   // Routes
   await app.register(healthRoutes, { prefix: '/health' });

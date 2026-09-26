@@ -43,6 +43,7 @@ enum FileReservationStatus {
 
 enum AgentType {
   IBM_BOB
+  CODEX
   CURSOR
   CLAUDE_CODE
   OTHER
@@ -301,6 +302,7 @@ model Project {
   repositories        ProjectRepository[]
   codeEntities        CodeEntity[]
   codeRelationships   CodeRelationship[]
+  taskCodeEntities    TaskCodeEntity[]
   coordinationRisks   CoordinationRisk[]
   contextUpdates      ContextUpdate[]
   // Phase 5
@@ -374,6 +376,7 @@ model Task {
   parallelSafetyA   ParallelSafetyEvaluation[] @relation("ParallelSafetyA")
   parallelSafetyB   ParallelSafetyEvaluation[] @relation("ParallelSafetyB")
   launchRequests    AgentLaunchRequest[]
+  codeEntities      TaskCodeEntity[]
 
   @@unique([projectId, displayId])
   @@map("tasks")
@@ -732,9 +735,27 @@ model CodeEntity {
   contractChanges    ContractChange[]
   sourceRisks        CoordinationRisk[] @relation("RiskSourceEntity")
   contextUpdates     ContextUpdate[]
+  tasks              TaskCodeEntity[]
 
   @@unique([projectId, filePath, name, type])
   @@map("code_entities")
+}
+
+model TaskCodeEntity {
+  id         String   @id @default(cuid())
+  projectId  String
+  taskId     String
+  entityId   String
+  firstSeenAt DateTime @default(now())
+  lastSeenAt DateTime @updatedAt
+
+  project Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  task    Task       @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  entity  CodeEntity @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, entityId])
+  @@index([projectId, entityId])
+  @@map("task_code_entities")
 }
 
 /// Phase 4: Relationship between two code entities

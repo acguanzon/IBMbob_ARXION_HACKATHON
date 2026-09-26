@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import type { TaskWithRelations, TaskStatus } from '@arxion/types';
 import {
   DndContext,
@@ -52,6 +52,10 @@ export function ProjectBoardClient({
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'info' } | null>(null);
   // Task dropped onto the agent dock
   const [dockTask, setDockTask] = useState<TaskWithRelations | null>(null);
+
+  useEffect(() => {
+    setTasks(initialTasks);
+  }, [initialTasks]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -126,11 +130,18 @@ export function ProjectBoardClient({
   }
 
   function handleTaskCreated(task: TaskWithRelations) {
-    setTasks((prev) => [...prev, task]);
+    setTasks((prev) => (prev.some((item) => item.id === task.id) ? prev : [...prev, task]));
+    setCreateModalOpen(false);
   }
 
   function handleTaskUpdated(updated: TaskWithRelations) {
     setTasks((prev) => prev.map((t) => (t.id === updated.id ? updated : t)));
+  }
+
+  function handleTaskDeleted(taskId: string) {
+    setTasks((prev) => prev.filter((task) => task.id !== taskId));
+    setSelectedTask(null);
+    setDrawerOpen(false);
   }
 
   const tasksByStatus = Object.fromEntries(
@@ -208,6 +219,7 @@ export function ProjectBoardClient({
           projectId={projectId}
           onClose={() => setDrawerOpen(false)}
           onTaskUpdated={handleTaskUpdated}
+          onTaskDeleted={handleTaskDeleted}
         />
       )}
 

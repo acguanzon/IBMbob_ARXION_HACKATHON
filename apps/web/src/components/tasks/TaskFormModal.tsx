@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useRef, useState, type FormEvent } from 'react';
 import type { TaskWithRelations } from '@arxion/types';
 import { api } from '@/lib/api';
 
@@ -24,6 +24,7 @@ export function TaskFormModal({ projectId, task, onClose, onSaved }: TaskFormMod
   const [criteria, setCriteria] = useState<string[]>(task?.acceptanceCriteria ?? ['']);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
 
   function addCriterion() {
     setCriteria((prev) => [...prev, '']);
@@ -39,6 +40,9 @@ export function TaskFormModal({ projectId, task, onClose, onSaved }: TaskFormMod
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
+    if (submittingRef.current) return;
+
+    submittingRef.current = true;
     setError(null);
     setSubmitting(true);
 
@@ -67,6 +71,7 @@ export function TaskFormModal({ projectId, task, onClose, onSaved }: TaskFormMod
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save task');
     } finally {
+      submittingRef.current = false;
       setSubmitting(false);
     }
   }
