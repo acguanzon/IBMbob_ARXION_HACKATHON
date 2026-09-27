@@ -21,17 +21,26 @@ declare module 'fastify' {
 
 export async function authenticate(req: FastifyRequest, reply: FastifyReply): Promise<void> {
   const integrationKey = req.headers['x-internal-api-key'];
+  const authHeader = req.headers['authorization'];
+  const bearerToken = authHeader && authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+
   const expectedIntegrationKeys = [process.env['INTERNAL_API_KEY'], process.env['MCP_API_KEY']]
     .filter((key): key is string => Boolean(key));
-  if (
-    typeof integrationKey === 'string' &&
-    (expectedIntegrationKeys.includes(integrationKey) || process.env['NODE_ENV'] === 'development')
-  ) {
+
+  const isMatchedKey =
+    (typeof integrationKey === 'string' && expectedIntegrationKeys.includes(integrationKey)) ||
+    (typeof bearerToken === 'string' && expectedIntegrationKeys.includes(bearerToken)) ||
+    (typeof integrationKey === 'string' && process.env['NODE_ENV'] === 'development');
+
+  if (isMatchedKey) {
     req.isInternalIntegration = true;
+    const defaultUser = await prisma.user.findFirst({ select: { id: true, name: true, email: true } });
+    if (defaultUser) {
+      req.user = defaultUser;
+    }
     return;
   }
 
-  const authHeader = req.headers['authorization'];
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
     await reply.status(401).send({
       success: false,
