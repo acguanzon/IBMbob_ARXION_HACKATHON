@@ -19,6 +19,16 @@ function unwrapResponse<T>(json: unknown): T {
   return json as T;
 }
 
+async function getErrorMessage(res: Response): Promise<string> {
+  const body = await res.text();
+  try {
+    const parsed = JSON.parse(body) as { error?: { message?: string } };
+    return parsed.error?.message ?? `API error ${res.status}`;
+  } catch {
+    return body || `API error ${res.status}`;
+  }
+}
+
 async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   const url = `${API_BASE_URL}${path}`;
   const res = await fetch(url, {
@@ -35,8 +45,7 @@ async function apiFetch<T>(path: string, options?: RequestInit): Promise<T> {
   });
 
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API error ${res.status}: ${body}`);
+    throw new Error(await getErrorMessage(res));
   }
 
   return unwrapResponse<T>(await res.json());
@@ -69,8 +78,7 @@ export async function authFetch<T>(path: string, options?: RequestInit): Promise
   }
 
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`API error ${res.status}: ${body}`);
+    throw new Error(await getErrorMessage(res));
   }
 
   return unwrapResponse<T>(await res.json());
@@ -80,7 +88,7 @@ export const api = {
   projects: {
     list: () => apiFetch<import('@arxion/types').ProjectWithMembers[]>('/projects'),
     get: (id: string) => apiFetch<import('@arxion/types').ProjectWithMembers>(`/projects/${id}`),
-    create: (body: { name: string; description?: string; repositoryUrl?: string }) =>
+    create: (body: import('@arxion/types').CreateProjectBody) =>
       authFetch<import('@arxion/types').ProjectWithMembers>('/projects', {
         method: 'POST',
         body: JSON.stringify(body),

@@ -227,6 +227,7 @@ See `.env.example` for the complete list.
 | `PORT` | api | — | API port (default: 3001) |
 | `NODE_ENV` | api | — | `development` or `production` |
 | `INTERNAL_API_KEY` | api | — | Key checked on internal routes |
+| `GITHUB_TOKEN` | api | For private repositories | Token used to verify and connect repositories that are not public |
 | `NEXT_PUBLIC_API_URL` | web | — | Backend URL for the browser (default: http://localhost:3001) |
 | `NEXT_PUBLIC_WS_URL` | web | — | WebSocket URL (default: ws://localhost:3001) |
 | `MCP_API_BASE_URL` | mcp-server | — | Backend URL for MCP server (default: http://localhost:3001) |

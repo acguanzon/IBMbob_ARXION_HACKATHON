@@ -339,9 +339,26 @@ export type TaskWorkIntent = z.infer<typeof TaskWorkIntentSchema>;
 
 // ─── Request / Response Schemas ───────────────────────────────────────────────
 
+export const GitHubRepositorySetupSchema = z.object({
+  mode: z.literal('existing'),
+  repositoryUrl: z
+    .string()
+    .url()
+    .refine((value) => {
+      try {
+        return new URL(value).hostname.toLowerCase() === 'github.com';
+      } catch {
+        return false;
+      }
+    }, 'Repository URL must be a GitHub URL'),
+});
+export type GitHubRepositorySetup = z.infer<typeof GitHubRepositorySetupSchema>;
+
 export const CreateProjectBodySchema = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
+  repositorySetup: GitHubRepositorySetupSchema.optional(),
+  // Kept for compatibility with older API clients.
   repositoryUrl: z.string().url().optional(),
 });
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;

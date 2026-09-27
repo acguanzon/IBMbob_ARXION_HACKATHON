@@ -1,19 +1,31 @@
 import { prisma } from '@arxion/database';
-import type {
-  CreateProjectBody,
-  ProjectWithMembers,
-  Project,
-} from '@arxion/types';
+import type { CreateProjectBody, ProjectWithMembers, Project } from '@arxion/types';
+import {
+  createGitHubProvider,
+  parseGitHubRepositoryUrl,
+  type GitRepository,
+} from '../../lib/git-provider.js';
+
+async function prepareRepository(body: CreateProjectBody): Promise<GitRepository | null> {
+  const setup = body.repositorySetup;
+  if (!setup) return null;
+
+  const provider = createGitHubProvider();
+  const { owner, repository } = parseGitHubRepositoryUrl(setup.repositoryUrl);
+  return provider.getRepository(owner, repository);
+}
 
 export async function createProject(
   body: CreateProjectBody,
   createdById: string,
 ): Promise<ProjectWithMembers> {
+  const repository = await prepareRepository(body);
+  const repositoryUrl = repository?.url ?? body.repositoryUrl ?? null;
   const project = await prisma.project.create({
     data: {
       name: body.name,
       description: body.description ?? null,
-      repositoryUrl: body.repositoryUrl ?? null,
+      repositoryUrl,
       createdById,
       members: {
         create: {
@@ -21,6 +33,20 @@ export async function createProject(
           role: 'OWNER',
         },
       },
+      ...(repository
+        ? {
+            repositories: {
+              create: {
+                provider: 'GITHUB',
+                owner: repository.owner,
+                repository: repository.name,
+                defaultBranch: repository.defaultBranch || 'main',
+                externalRepositoryId: repository.id,
+                status: 'CONNECTED',
+              },
+            },
+          }
+        : {}),
     },
     include: {
       members: {

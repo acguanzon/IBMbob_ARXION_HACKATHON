@@ -83,12 +83,15 @@ export class GitHubProvider implements IGitProvider {
   }
 
   private async request<T>(path: string): Promise<T> {
+    const headers: Record<string, string> = {
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'arxion-platform/4.0',
+    }
+    if (this.token) headers['Authorization'] = `Bearer ${this.token}`
+
     const res = await fetch(`${this.baseUrl}${path}`, {
-      headers: {
-        Authorization: `Bearer ${this.token}`,
-        Accept: 'application/vnd.github.v3+json',
-        'User-Agent': 'arxion-platform/4.0',
-      },
+      headers,
     })
     if (!res.ok) {
       const body = await res.text()
@@ -264,4 +267,25 @@ export function createGitHubProvider(token?: string): GitHubProvider {
     // Operations that need the API will fail at call time.
   }
   return new GitHubProvider(t)
+}
+
+export function parseGitHubRepositoryUrl(repositoryUrl: string): { owner: string; repository: string } {
+  let url: URL
+  try {
+    url = new URL(repositoryUrl)
+  } catch {
+    throw Object.assign(new Error('Enter a valid GitHub repository URL.'), { statusCode: 400 })
+  }
+
+  const parts = url.pathname.replace(/^\/+|\/+$/g, '').split('/')
+  const owner = parts[0]
+  const repository = parts[1]?.replace(/\.git$/i, '')
+  if (url.hostname.toLowerCase() !== 'github.com' || !owner || !repository || parts.length !== 2) {
+    throw Object.assign(
+      new Error('GitHub repository URL must look like https://github.com/owner/repository.'),
+      { statusCode: 400 },
+    )
+  }
+
+  return { owner, repository }
 }
