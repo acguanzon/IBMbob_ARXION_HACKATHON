@@ -1,0 +1,81 @@
+# Render Blueprint for the Arxion demo environment.
+# Secrets marked sync: false are entered in the Render dashboard during setup.
+
+services:
+  - type: web
+    name: arxion-api
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /health
+    buildCommand: >-
+      npm install -g pnpm@12.6.0 &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @arxion/types build &&
+      pnpm --filter @arxion/config build &&
+      pnpm --filter @arxion/database build &&
+      pnpm --filter @arxion/api build
+    startCommand: >-
+      pnpm --filter @arxion/database exec prisma migrate deploy &&
+      pnpm --filter @arxion/api start
+    envVars:
+      - key: NODE_VERSION
+        value: 22.18.0
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: arxion-postgres
+          property: connectionString
+      - key: CORS_ORIGIN
+        fromService:
+          type: web
+          name: arxion-web
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: INTERNAL_API_KEY
+        generateValue: true
+      - key: MCP_API_KEY
+        sync: false
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: LOG_LEVEL
+        value: info
+
+  - type: web
+    name: arxion-web
+    runtime: node
+    plan: free
+    region: singapore
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /login
+    buildCommand: >-
+      npm install -g pnpm@12.6.0 &&
+      pnpm install --frozen-lockfile &&
+      pnpm --filter @arxion/types build &&
+      pnpm --filter @arxion/web build
+    startCommand: pnpm --filter @arxion/web exec next start -H 0.0.0.0 -p $PORT
+    envVars:
+      - key: NODE_VERSION
+        value: 22.18.0
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_PUBLIC_API_URL
+        fromService:
+          type: web
+          name: arxion-api
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: NEXT_PUBLIC_WS_URL
+        fromService:
+          type: web
+          name: arxion-api
+          envVarKey: RENDER_EXTERNAL_URL
+
+databases:
+  - name: arxion-postgres
+    plan: free
+    region: singapore
+    databaseName: arxion
+    ipAllowList: []

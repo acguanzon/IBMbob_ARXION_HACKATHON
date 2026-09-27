@@ -978,6 +978,7 @@ export type DomainEventType =
   // Realignment
   | 'agent.launch_requested'
   | 'agent.launch_accepted'
+  | 'agent.launch_started'
   | 'agent.launch_cancelled';
 
 export interface DomainEvent<T = unknown> {
