@@ -12,7 +12,7 @@ services:
     healthCheckPath: /health
     buildCommand: >-
       npm install -g pnpm@9.15.4 &&
-      pnpm install --frozen-lockfile &&
+      NODE_ENV=development pnpm install --frozen-lockfile --prod=false &&
       pnpm --filter @arxion/types build &&
       pnpm --filter @arxion/config build &&
       pnpm --filter @arxion/database build &&
@@ -53,7 +53,7 @@ services:
     healthCheckPath: /login
     buildCommand: >-
       npm install -g pnpm@9.15.4 &&
-      pnpm install --frozen-lockfile &&
+      NODE_ENV=development pnpm install --frozen-lockfile --prod=false &&
       pnpm --filter @arxion/types build &&
       pnpm --filter @arxion/web build
     startCommand: pnpm --filter @arxion/web exec next start -H 0.0.0.0 -p $PORT
