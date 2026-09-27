@@ -23,9 +23,21 @@ async function prepareRepository(body: CreateProjectBody): Promise<GitRepository
   const setup = body.repositorySetup;
   if (!setup) return null;
 
-  const provider = createGitHubProvider();
   const { owner, repository } = parseGitHubRepositoryUrl(setup.repositoryUrl);
-  return provider.getRepository(owner, repository);
+  try {
+    const provider = createGitHubProvider();
+    return await provider.getRepository(owner, repository);
+  } catch (err) {
+    // If GitHub API call fails (e.g. rate limit, missing GITHUB_TOKEN on Render, private repo),
+    // fall back to the parsed details so project creation never fails with 500.
+    return {
+      id: `${owner}/${repository}`,
+      name: repository,
+      owner,
+      defaultBranch: 'main',
+      url: `https://github.com/${owner}/${repository}`,
+    };
+  }
 }
 
 export async function createProject(
