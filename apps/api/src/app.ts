@@ -33,7 +33,13 @@ export async function buildApp() {
     logger: { level: getEnv('LOG_LEVEL', 'info') },
   });
 
-  const corsOrigin = getEnv('CORS_ORIGIN', 'http://localhost:3000');
+  const rawCorsOrigin = getEnv('CORS_ORIGIN', 'http://localhost:3000');
+  const corsOrigin =
+    rawCorsOrigin === '*'
+      ? true
+      : rawCorsOrigin.includes(',')
+        ? rawCorsOrigin.split(',').map((o) => o.trim())
+        : rawCorsOrigin;
 
   await app.register(cors, {
     origin: corsOrigin,

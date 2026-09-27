@@ -8,7 +8,10 @@ import type { DomainEvent } from '@arxion/types';
  * Clients join a room named after their projectId.
  * All domain events are forwarded to the matching room.
  */
-export function attachWebSocket(app: FastifyInstance, corsOrigin: string): SocketIOServer {
+export function attachWebSocket(
+  app: FastifyInstance,
+  corsOrigin: string | string[] | boolean,
+): SocketIOServer {
   const io = new SocketIOServer(app.server, {
     cors: {
       origin: corsOrigin,
