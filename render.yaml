@@ -11,7 +11,7 @@ services:
     autoDeploy: true
     healthCheckPath: /health
     buildCommand: >-
-      npm install -g pnpm@12.6.0 &&
+      npm install -g pnpm@9.15.4 &&
       pnpm install --frozen-lockfile &&
       pnpm --filter @arxion/types build &&
       pnpm --filter @arxion/config build &&
@@ -52,7 +52,7 @@ services:
     autoDeploy: true
     healthCheckPath: /login
     buildCommand: >-
-      npm install -g pnpm@12.6.0 &&
+      npm install -g pnpm@9.15.4 &&
       pnpm install --frozen-lockfile &&
       pnpm --filter @arxion/types build &&
       pnpm --filter @arxion/web build

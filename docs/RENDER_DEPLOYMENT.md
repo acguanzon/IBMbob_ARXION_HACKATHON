@@ -47,7 +47,7 @@ workspace root.
 Build command:
 
 ```bash
-npm install -g pnpm@12.6.0 && pnpm install --frozen-lockfile && pnpm --filter @arxion/types build && pnpm --filter @arxion/config build && pnpm --filter @arxion/database build && pnpm --filter @arxion/api build
+npm install -g pnpm@9.15.4 && pnpm install --frozen-lockfile && pnpm --filter @arxion/types build && pnpm --filter @arxion/config build && pnpm --filter @arxion/database build && pnpm --filter @arxion/api build
 ```
 
 Free-plan start command:
@@ -96,7 +96,7 @@ Static Site.
 Build command:
 
 ```bash
-npm install -g pnpm@12.6.0 && pnpm install --frozen-lockfile && pnpm --filter @arxion/types build && pnpm --filter @arxion/web build
+npm install -g pnpm@9.15.4 && pnpm install --frozen-lockfile && pnpm --filter @arxion/types build && pnpm --filter @arxion/web build
 ```
 
 Start command:
