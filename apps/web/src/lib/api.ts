@@ -93,6 +93,15 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(body),
       }),
+    update: (projectId: string, body: import('@arxion/types').UpdateProjectBody) =>
+      authFetch<import('@arxion/types').ProjectWithMembers>(`/projects/${projectId}`, {
+        method: 'PATCH',
+        body: JSON.stringify(body),
+      }),
+    remove: (projectId: string) =>
+      authFetch<{ id: string; name: string }>(`/projects/${projectId}`, {
+        method: 'DELETE',
+      }),
     addMember: (projectId: string, email: string, role = 'MEMBER') =>
       authFetch<{ id: string }>(`/projects/${projectId}/members`, {
         method: 'POST',
@@ -128,6 +137,14 @@ export const api = {
         method: 'DELETE',
         body: JSON.stringify({}),
       }),
+    complete: (taskId: string, userId: string) =>
+      authFetch<{ task: import('@arxion/types').TaskWithRelations; alreadyDone: boolean }>(
+        `/tasks/${taskId}/complete`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ userId }),
+        },
+      ),
     claim: (projectId: string, taskId: string, userId: string) =>
       authFetch<import('@arxion/types').TaskWithRelations>(
         `/projects/${projectId}/tasks/${taskId}/claim`,
@@ -194,6 +211,17 @@ export const api = {
   },
   // Phase 3
   reviews: {
+    request: (taskId: string, userId: string) =>
+      authFetch<{
+        review: ReviewWithDetails;
+        preflight: import('@arxion/types').ReviewPreflight;
+      }>(
+        `/tasks/${taskId}/request-review`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ userId }),
+        },
+      ),
     listByTask: (taskId: string) =>
       apiFetch<ReviewWithDetails[]>(`/tasks/${taskId}/reviews`),
     get: (reviewId: string) =>
@@ -201,12 +229,12 @@ export const api = {
     getFindings: (reviewId: string) =>
       apiFetch<ReviewFindingItem[]>(`/reviews/${reviewId}/findings`),
     approve: (reviewId: string, reviewerId: string, comment?: string) =>
-      apiFetch<ReviewWithDetails>(`/reviews/${reviewId}/approve`, {
+      authFetch<ReviewWithDetails>(`/reviews/${reviewId}/approve`, {
         method: 'POST',
         body: JSON.stringify({ reviewerId, comment }),
       }),
     requestChanges: (reviewId: string, reviewerId: string, comment: string) =>
-      apiFetch<{ recorded: boolean }>(`/reviews/${reviewId}/request-changes`, {
+      authFetch<{ recorded: boolean }>(`/reviews/${reviewId}/request-changes`, {
         method: 'POST',
         body: JSON.stringify({ reviewerId, comment }),
       }),

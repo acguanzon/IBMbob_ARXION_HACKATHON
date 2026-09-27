@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { AddMemberModal } from '@/components/members/AddMemberModal';
 import { useState } from 'react';
 import { CreateProjectModal } from '@/components/projects/CreateProjectModal';
+import { ProjectSettingsModal } from '@/components/projects/ProjectSettingsModal';
 
 interface SidebarProps {
   projects: ProjectWithMembers[];
@@ -19,6 +20,7 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const [showAddMember, setShowAddMember] = useState(false);
   const [showCreateProject, setShowCreateProject] = useState(false);
+  const [settingsProject, setSettingsProject] = useState<ProjectWithMembers | null>(null);
 
   return (
     <aside className="flex w-60 flex-col border-r border-slate-200 bg-white">
@@ -42,7 +44,7 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
               href={activeProjectId ? `/dashboard/${activeProjectId}` : '/dashboard'}
               className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
                 pathname === `/dashboard/${activeProjectId ?? ''}` || pathname === '/dashboard'
-                  ? 'bg-blue-50 text-blue-700 font-medium'
+                  ? 'bg-blue-50 font-medium text-blue-700'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
@@ -54,7 +56,7 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
               href={activeProjectId ? `/dashboard/${activeProjectId}/coordination` : '/dashboard'}
               className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
                 pathname.endsWith('/coordination')
-                  ? 'bg-blue-50 text-blue-700 font-medium'
+                  ? 'bg-blue-50 font-medium text-blue-700'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
@@ -66,7 +68,7 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
               href="/dashboard/reviews"
               className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
                 pathname === '/dashboard/reviews'
-                  ? 'bg-blue-50 text-blue-700 font-medium'
+                  ? 'bg-blue-50 font-medium text-blue-700'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
@@ -78,7 +80,7 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
               href="/dashboard/decisions"
               className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-sm ${
                 pathname === '/dashboard/decisions'
-                  ? 'bg-blue-50 text-blue-700 font-medium'
+                  ? 'bg-blue-50 font-medium text-blue-700'
                   : 'text-slate-600 hover:bg-slate-50'
               }`}
             >
@@ -92,16 +94,22 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
       <div className="px-3 pt-4">
         <div className="mb-2 flex items-center justify-between px-1">
           <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Projects</p>
-          <button onClick={() => setShowCreateProject(true)} className="rounded px-1.5 py-0.5 text-xs text-blue-600 hover:bg-blue-50" title="Create project">+ New</button>
+          <button
+            onClick={() => setShowCreateProject(true)}
+            className="rounded px-1.5 py-0.5 text-xs text-blue-600 hover:bg-blue-50"
+            title="Create project"
+          >
+            + New
+          </button>
         </div>
         <ul className="space-y-0.5">
           {projects.map((project) => (
-            <li key={project.id}>
+            <li key={project.id} className="flex items-center gap-1">
               <Link
                 href={`/dashboard/${project.id}`}
-                className={`flex items-center justify-between rounded-md px-2 py-1.5 text-sm ${
+                className={`flex min-w-0 flex-1 items-center justify-between rounded-md px-2 py-1.5 text-sm ${
                   project.id === activeProjectId
-                    ? 'bg-blue-50 text-blue-700 font-medium'
+                    ? 'bg-blue-50 font-medium text-blue-700'
                     : 'text-slate-600 hover:bg-slate-50'
                 }`}
               >
@@ -110,6 +118,20 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
                   {project._count.tasks}
                 </span>
               </Link>
+              {user &&
+                project.members.some(
+                  (member) => member.userId === user.id && member.role === 'OWNER',
+                ) && (
+                  <button
+                    type="button"
+                    onClick={() => setSettingsProject(project)}
+                    className="shrink-0 rounded px-1.5 py-1 text-xs text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                    title={`Manage ${project.name}`}
+                    aria-label={`Manage ${project.name}`}
+                  >
+                    ⚙
+                  </button>
+                )}
             </li>
           ))}
           {projects.length === 0 && (
@@ -171,13 +193,11 @@ export function Sidebar({ projects, activeProjectId }: SidebarProps) {
 
       {/* Add Member Modal */}
       {showAddMember && activeProject && (
-        <AddMemberModal
-          projectId={activeProject.id}
-          onClose={() => setShowAddMember(false)}
-        />
+        <AddMemberModal projectId={activeProject.id} onClose={() => setShowAddMember(false)} />
       )}
-      {showCreateProject && (
-        <CreateProjectModal onClose={() => setShowCreateProject(false)} />
+      {showCreateProject && <CreateProjectModal onClose={() => setShowCreateProject(false)} />}
+      {settingsProject && (
+        <ProjectSettingsModal project={settingsProject} onClose={() => setSettingsProject(null)} />
       )}
     </aside>
   );

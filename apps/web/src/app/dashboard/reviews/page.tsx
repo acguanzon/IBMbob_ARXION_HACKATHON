@@ -2,6 +2,8 @@ import { serverApi as api } from '@/lib/server-api';
 import type { ReviewWithDetails } from '@/lib/api';
 import { Sidebar } from '@/components/Sidebar';
 import { RealtimeProvider } from '@/components/RealtimeProvider';
+import { ReviewActions } from '@/components/reviews/ReviewActions';
+import { CompleteTaskAction } from '@/components/reviews/CompleteTaskAction';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +25,15 @@ const SEVERITY_COLOR: Record<string, string> = {
   CRITICAL: 'text-red-600 font-bold',
 };
 
-function ReviewCard({ review, taskDisplayId }: { review: ReviewWithDetails; taskDisplayId?: string }) {
+function ReviewCard({
+  review,
+  taskDisplayId,
+  taskStatus,
+}: {
+  review: ReviewWithDetails;
+  taskDisplayId?: string;
+  taskStatus: string;
+}) {
   const blockingOpen = review.findings.filter((f) => f.isBlocking && f.status === 'OPEN');
   const allFindings = review.findings;
   const statusClass = STATUS_COLOR[review.status] ?? 'bg-slate-100 text-slate-600';
@@ -48,10 +58,14 @@ function ReviewCard({ review, taskDisplayId }: { review: ReviewWithDetails; task
         </div>
         <div className="shrink-0 text-right">
           {review.reviewRevision && (
-            <span className="font-mono text-xs text-slate-400">{review.reviewRevision.slice(0, 8)}</span>
+            <span className="font-mono text-xs text-slate-400">
+              {review.reviewRevision.slice(0, 8)}
+            </span>
           )}
           {review.approvedAt && (
-            <p className="text-xs text-emerald-600">✓ Approved {new Date(review.approvedAt).toLocaleDateString()}</p>
+            <p className="text-xs text-emerald-600">
+              ✓ Approved {new Date(review.approvedAt).toLocaleDateString()}
+            </p>
           )}
         </div>
       </div>
@@ -60,10 +74,24 @@ function ReviewCard({ review, taskDisplayId }: { review: ReviewWithDetails; task
       {review.snapshot && (
         <div className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs text-slate-600">
           <span className="font-medium">Snapshot: </span>
-          {review.snapshot.branchName && <span>branch <code className="font-mono">{review.snapshot.branchName}</code> · </span>}
-          <span>revision <code className="font-mono">{review.snapshot.workRevision.slice(0, 8)}</code></span>
+          {review.snapshot.branchName && (
+            <span>
+              branch <code className="font-mono">{review.snapshot.branchName}</code> ·{' '}
+            </span>
+          )}
+          <span>
+            revision <code className="font-mono">{review.snapshot.workRevision.slice(0, 8)}</code>
+          </span>
           {review.snapshot.testSnapshot && (
-            <span> · tests {String((review.snapshot.testSnapshot as Record<string, unknown>)['testsPassed'] ?? '?')}/{String((review.snapshot.testSnapshot as Record<string, unknown>)['testsRun'] ?? '?')}</span>
+            <span>
+              {' '}
+              · tests{' '}
+              {String(
+                (review.snapshot.testSnapshot as Record<string, unknown>)['testsPassed'] ?? '?',
+              )}
+              /
+              {String((review.snapshot.testSnapshot as Record<string, unknown>)['testsRun'] ?? '?')}
+            </span>
           )}
         </div>
       )}
@@ -82,11 +110,15 @@ function ReviewCard({ review, taskDisplayId }: { review: ReviewWithDetails; task
           <ul className="space-y-1">
             {allFindings.slice(0, 6).map((f) => (
               <li key={f.id} className="flex items-start gap-1.5 text-xs">
-                <span className={`shrink-0 font-medium ${SEVERITY_COLOR[f.severity] ?? 'text-slate-600'}`}>
+                <span
+                  className={`shrink-0 font-medium ${SEVERITY_COLOR[f.severity] ?? 'text-slate-600'}`}
+                >
                   [{f.source}] {f.severity}
                 </span>
                 <span className="text-slate-700">{f.title}</span>
-                <span className={`ml-auto shrink-0 rounded px-1 py-0.5 text-xs ${f.status === 'OPEN' ? (f.isBlocking ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600') : 'bg-slate-100 text-slate-400'}`}>
+                <span
+                  className={`ml-auto shrink-0 rounded px-1 py-0.5 text-xs ${f.status === 'OPEN' ? (f.isBlocking ? 'bg-red-100 text-red-600' : 'bg-amber-100 text-amber-600') : 'bg-slate-100 text-slate-400'}`}
+                >
                   {f.status}
                 </span>
               </li>
@@ -111,6 +143,18 @@ function ReviewCard({ review, taskDisplayId }: { review: ReviewWithDetails; task
           Invalidated: {review.invalidationReason}
         </div>
       )}
+
+      {review.status === 'IN_REVIEW' && (
+        <ReviewActions reviewId={review.id} blockingFindingCount={blockingOpen.length} />
+      )}
+      {review.status === 'APPROVED' && taskStatus !== 'DONE' && (
+        <CompleteTaskAction taskId={review.taskId} />
+      )}
+      {review.status === 'APPROVED' && taskStatus === 'DONE' && (
+        <div className="mt-4 border-t border-slate-200 pt-3 text-sm font-medium text-emerald-700">
+          ✓ Task completed and moved to Done
+        </div>
+      )}
     </div>
   );
 }
@@ -124,27 +168,34 @@ export default async function ReviewsPage() {
     // handled below
   }
 
-  const firstProject = projects[0] ?? null;
+  const projectTasks = await Promise.all(
+    projects.map(async (project) => {
+      try {
+        return { project, tasks: await api.tasks.listByProject(project.id) };
+      } catch {
+        return { project, tasks: [] as Awaited<ReturnType<typeof api.tasks.listByProject>> };
+      }
+    }),
+  );
 
-  let tasks: Awaited<ReturnType<typeof api.tasks.listByProject>> = [];
-  if (firstProject) {
-    try {
-      tasks = await api.tasks.listByProject(firstProject.id);
-    } catch {
-      // non-fatal
-    }
-  }
+  const tasks = projectTasks.flatMap(({ project, tasks: projectTaskList }) =>
+    projectTaskList.map((task) => ({ project, task })),
+  );
 
   // Fetch reviews for all tasks in parallel
-  type ReviewEntry = { task: (typeof tasks)[number]; reviews: ReviewWithDetails[] };
+  type ReviewEntry = {
+    project: (typeof projects)[number];
+    task: (typeof tasks)[number]['task'];
+    reviews: ReviewWithDetails[];
+  };
   const reviewEntries: ReviewEntry[] = [];
 
   await Promise.all(
-    tasks.map(async (task) => {
+    tasks.map(async ({ project, task }) => {
       try {
         const reviews = await api.reviews.listByTask(task.id);
         if (reviews.length > 0) {
-          reviewEntries.push({ task, reviews });
+          reviewEntries.push({ project, task, reviews });
         }
       } catch {
         // ignore tasks with no reviews
@@ -169,17 +220,17 @@ export default async function ReviewsPage() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
-      {firstProject && <RealtimeProvider projectId={firstProject.id} />}
-      <Sidebar projects={projects} activeProjectId={firstProject?.id ?? null} />
+      {projects.map((project) => (
+        <RealtimeProvider key={project.id} projectId={project.id} />
+      ))}
+      <Sidebar projects={projects} activeProjectId={null} />
 
       <main className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
         <header className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
           <div>
             <h1 className="text-lg font-semibold text-slate-900">Reviews</h1>
-            <p className="mt-0.5 text-sm text-slate-500">
-              {firstProject?.name ?? 'No project selected'} — review workspace
-            </p>
+            <p className="mt-0.5 text-sm text-slate-500">All projects — review workspace</p>
           </div>
           <div className="flex items-center gap-2">
             {counts.inReview > 0 && (
@@ -207,26 +258,38 @@ export default async function ReviewsPage() {
                 <div className="text-4xl">🔍</div>
                 <h2 className="mt-3 text-lg font-medium text-slate-700">No reviews yet</h2>
                 <p className="mt-1 text-sm text-slate-500">
-                  Reviews appear here when an agent calls <code className="rounded bg-slate-100 px-1">request_review</code>.
+                  Reviews appear here when an agent calls{' '}
+                  <code className="rounded bg-slate-100 px-1">request_review</code>.
                 </p>
               </div>
             </div>
           ) : (
             <div className="space-y-6">
-              {reviewEntries.map(({ task, reviews }) => (
+              {reviewEntries.map(({ project, task, reviews }) => (
                 <section key={task.id}>
                   <div className="mb-2 flex items-center gap-2">
                     <h2 className="font-medium text-slate-700">
-                      <span className="font-mono text-sm text-slate-400">{task.displayId}</span>{' '}
+                      <span className="text-sm text-slate-400">{project.name}</span>
+                      <span className="mx-1 text-slate-300">/</span>
+                      <span className="font-mono text-sm text-slate-400">
+                        {task.displayId}
+                      </span>{' '}
                       {task.title}
                     </h2>
-                    <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[task.status] ?? 'bg-slate-100 text-slate-500'}`}>
+                    <span
+                      className={`rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_COLOR[task.status] ?? 'bg-slate-100 text-slate-500'}`}
+                    >
                       {task.status}
                     </span>
                   </div>
                   <div className="space-y-3">
                     {reviews.map((review) => (
-                      <ReviewCard key={review.id} review={review} />
+                      <ReviewCard
+                        key={review.id}
+                        review={review}
+                        taskDisplayId={task.displayId}
+                        taskStatus={task.status}
+                      />
                     ))}
                   </div>
                 </section>

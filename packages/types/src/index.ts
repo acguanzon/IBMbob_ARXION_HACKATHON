@@ -363,6 +363,12 @@ export const CreateProjectBodySchema = z.object({
 });
 export type CreateProjectBody = z.infer<typeof CreateProjectBodySchema>;
 
+export const UpdateProjectBodySchema = z.object({
+  name: z.string().trim().min(1).max(100).optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+});
+export type UpdateProjectBody = z.infer<typeof UpdateProjectBodySchema>;
+
 export const CreateTaskBodySchema = z.object({
   displayId: z.string().min(1).max(20).optional(),
   title: z.string().min(1).max(200),

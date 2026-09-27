@@ -1,10 +1,23 @@
 import { prisma } from '@arxion/database';
-import type { CreateProjectBody, ProjectWithMembers, Project } from '@arxion/types';
+import type {
+  CreateProjectBody,
+  UpdateProjectBody,
+  ProjectWithMembers,
+  Project,
+} from '@arxion/types';
 import {
   createGitHubProvider,
   parseGitHubRepositoryUrl,
   type GitRepository,
 } from '../../lib/git-provider.js';
+
+const publicUserSelect = {
+  id: true,
+  name: true,
+  email: true,
+  createdAt: true,
+  updatedAt: true,
+} as const;
 
 async function prepareRepository(body: CreateProjectBody): Promise<GitRepository | null> {
   const setup = body.repositorySetup;
@@ -50,7 +63,7 @@ export async function createProject(
     },
     include: {
       members: {
-        include: { user: true },
+        include: { user: { select: publicUserSelect } },
       },
       _count: { select: { tasks: true } },
     },
@@ -64,7 +77,7 @@ export async function listProjects(userId: string): Promise<ProjectWithMembers[]
     where: { members: { some: { userId } } },
     include: {
       members: {
-        include: { user: true },
+        include: { user: { select: publicUserSelect } },
       },
       _count: { select: { tasks: true } },
     },
@@ -79,7 +92,7 @@ export async function getProjectById(projectId: string): Promise<ProjectWithMemb
     where: { id: projectId },
     include: {
       members: {
-        include: { user: true },
+        include: { user: { select: publicUserSelect } },
       },
       _count: { select: { tasks: true } },
     },
@@ -91,9 +104,31 @@ export async function getProjectById(projectId: string): Promise<ProjectWithMemb
 export async function getProjectMembers(projectId: string) {
   return prisma.projectMember.findMany({
     where: { projectId },
-    include: { user: true },
+    include: { user: { select: publicUserSelect } },
     orderBy: { joinedAt: 'asc' },
   });
+}
+
+export async function updateProject(projectId: string, body: UpdateProjectBody) {
+  return prisma.project.update({
+    where: { id: projectId },
+    data: {
+      ...(body.name !== undefined && { name: body.name }),
+      ...(body.description !== undefined && { description: body.description || null }),
+    },
+    include: {
+      members: { include: { user: { select: publicUserSelect } } },
+      _count: { select: { tasks: true } },
+    },
+  });
+}
+
+export async function deleteProject(projectId: string) {
+  const project = await prisma.project.delete({
+    where: { id: projectId },
+    select: { id: true, name: true },
+  });
+  return project;
 }
 
 // Ensure a project exists — throws if not found

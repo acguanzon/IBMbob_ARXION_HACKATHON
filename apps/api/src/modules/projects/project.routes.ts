@@ -1,11 +1,18 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
-import { CreateProjectBodySchema, AddMemberBodySchema, UpdateMemberRoleBodySchema } from '@arxion/types';
+import {
+  CreateProjectBodySchema,
+  UpdateProjectBodySchema,
+  AddMemberBodySchema,
+  UpdateMemberRoleBodySchema,
+} from '@arxion/types';
 import {
   createProject,
   listProjects,
   getProjectById,
   getProjectMembers,
   requireProject,
+  updateProject,
+  deleteProject,
 } from './project.service.js';
 import { authenticate } from '../../lib/auth-middleware.js';
 import { requireProjectRole } from '../../lib/guards.js';
@@ -38,6 +45,23 @@ export async function projectRoutes(app: FastifyInstance): Promise<void> {
       });
       return;
     }
+    await reply.status(200).send({ success: true, data: project });
+  });
+
+  // PATCH /projects/:projectId — owners can edit project details
+  app.patch('/:projectId', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { projectId } = request.params as { projectId: string };
+    await requireProjectRole(projectId, request.user!.id, ['OWNER']);
+    const body = UpdateProjectBodySchema.parse(request.body);
+    const project = await updateProject(projectId, body);
+    await reply.status(200).send({ success: true, data: project });
+  });
+
+  // DELETE /projects/:projectId — deletes Arxion data only, never the GitHub repository
+  app.delete('/:projectId', async (request: FastifyRequest, reply: FastifyReply) => {
+    const { projectId } = request.params as { projectId: string };
+    await requireProjectRole(projectId, request.user!.id, ['OWNER']);
+    const project = await deleteProject(projectId);
     await reply.status(200).send({ success: true, data: project });
   });
 

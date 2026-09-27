@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { TaskWithRelations } from '@arxion/types';
 import { api } from '@/lib/api';
+import { useAuth } from '@/context/AuthContext';
 
 interface ReviewRequestModalProps {
   task: TaskWithRelations;
@@ -11,6 +12,7 @@ interface ReviewRequestModalProps {
 }
 
 export function ReviewRequestModal({ task, onClose, onConfirmed }: ReviewRequestModalProps) {
+  const { user } = useAuth();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,8 +20,9 @@ export function ReviewRequestModal({ task, onClose, onConfirmed }: ReviewRequest
     setError(null);
     setSubmitting(true);
     try {
-      const updated = await api.tasks.update(task.id, { status: 'REVIEW' });
-      onConfirmed(updated);
+      if (!user) throw new Error('You must be signed in to request a review.');
+      await api.reviews.request(task.id, user.id);
+      onConfirmed({ ...task, status: 'REVIEW' });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to move to review');
     } finally {
@@ -30,12 +33,15 @@ export function ReviewRequestModal({ task, onClose, onConfirmed }: ReviewRequest
   return (
     <>
       <div className="fixed inset-0 z-50 bg-black/30" onClick={onClose} aria-hidden="true" />
-      <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl bg-white p-5 shadow-xl border border-slate-200">
+      <div className="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-xl border border-slate-200 bg-white p-5 shadow-xl">
         <h2 className="text-base font-semibold text-slate-900">Request Review?</h2>
         <p className="mt-2 text-sm text-slate-600">
-          Move <span className="font-medium">{task.displayId} — {task.title}</span> to{' '}
-          <span className="font-medium text-purple-600">REVIEW</span>? Make sure your work is
-          complete and tests pass before requesting review.
+          Create a review for{' '}
+          <span className="font-medium">
+            {task.displayId} — {task.title}
+          </span>
+          ? A completion report is required so reviewers can verify the changed files, tests, and
+          revision.
         </p>
 
         {error && (
@@ -54,7 +60,7 @@ export function ReviewRequestModal({ task, onClose, onConfirmed }: ReviewRequest
             disabled={submitting}
             className="rounded-md bg-purple-600 px-4 py-2 text-sm font-semibold text-white hover:bg-purple-700 disabled:opacity-60"
           >
-            {submitting ? 'Moving…' : 'Request Review'}
+            {submitting ? 'Requesting…' : 'Request Review'}
           </button>
         </div>
       </div>

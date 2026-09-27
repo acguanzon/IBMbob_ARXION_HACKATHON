@@ -27,6 +27,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let cancelled = false;
+
+    // Sessions created before server-rendered dashboard requests used an auth
+    // cookie may only have a token in localStorage. Mirror that token into the
+    // cookie once, then refresh the Server Components with authenticated data.
+    const token = getToken();
+    const hasTokenCookie = document.cookie
+      .split('; ')
+      .some((cookie) => cookie.startsWith('arxion_token='));
+    if (token && !hasTokenCookie) {
+      setToken(token);
+      router.refresh();
+    }
+
     getCurrentUser().then((u) => {
       if (!cancelled) {
         setUser(u);
@@ -36,7 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   const login = useCallback(async (token: string) => {
     setToken(token);
