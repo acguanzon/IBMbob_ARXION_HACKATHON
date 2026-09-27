@@ -66,7 +66,16 @@ const codexAvailable = commandAvailable(codexCommand);
 
 function setCors(req: IncomingMessage, res: ServerResponse): boolean {
   const origin = req.headers.origin;
-  if (origin && origin !== webOrigin) {
+  const isAllowed =
+    !origin ||
+    webOrigin === '*' ||
+    origin === webOrigin ||
+    origin.endsWith('.onrender.com') ||
+    origin.endsWith('.vercel.app') ||
+    origin.startsWith('http://localhost:') ||
+    origin.startsWith('http://127.0.0.1:');
+
+  if (!isAllowed) {
     json(res, 403, { error: `Origin not allowed: ${origin}` });
     return false;
   }
