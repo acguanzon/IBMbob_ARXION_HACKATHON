@@ -92,6 +92,11 @@ async function main(): Promise<void> {
       status: TaskStatus.TODO,
       priority: TaskPriority.HIGH,
       createdById: maki.id,
+      acceptanceCriteria: [
+        'PostgreSQL schema matches User entity design',
+        'Id, name, email, and timestamp columns are present',
+        'Prisma migration applies cleanly',
+      ],
     },
   });
 
@@ -107,6 +112,11 @@ async function main(): Promise<void> {
       status: TaskStatus.TODO,
       priority: TaskPriority.HIGH,
       createdById: maki.id,
+      acceptanceCriteria: [
+        'POST /api/login endpoint returns 200 with JWT on valid credentials',
+        'Returns 401 on invalid credentials',
+        'Unit tests pass with >80% coverage',
+      ],
     },
   });
 
@@ -122,6 +132,11 @@ async function main(): Promise<void> {
       status: TaskStatus.TODO,
       priority: TaskPriority.MEDIUM,
       createdById: maki.id,
+      acceptanceCriteria: [
+        'Responsive login form with email and password inputs',
+        'Shows loading spinner during authentication',
+        'Displays error alert on 401 responses',
+      ],
     },
   });
 
