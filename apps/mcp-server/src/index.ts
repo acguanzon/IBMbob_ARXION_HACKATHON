@@ -15,8 +15,28 @@ import { getEnv } from '@arxion/config';
 
 // ── Configuration ─────────────────────────────────────────────────────────────
 
-const API_BASE_URL = getEnv('MCP_API_BASE_URL', 'http://localhost:3001');
-const API_KEY = process.env['MCP_API_KEY'] ?? '';
+function resolveApiBaseUrl(): string {
+  const raw = process.env['MCP_API_BASE_URL'] ?? process.env['ARXION_API_URL'] ?? 'http://localhost:3001';
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  try {
+    const url = new URL(trimmed);
+    if (!['http:', 'https:'].includes(url.protocol)) {
+      throw new Error(`Invalid protocol: ${url.protocol}`);
+    }
+    return trimmed;
+  } catch {
+    throw new Error(
+      `Invalid Arxion API base URL: "${raw}". It must be a valid HTTP or HTTPS URL (e.g. "https://arxion-api-xxxx.onrender.com" or "http://localhost:3001"). Check your MCP_API_BASE_URL or ARXION_API_URL setting.`,
+    );
+  }
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
+const API_KEY =
+  process.env['MCP_API_KEY'] ??
+  process.env['INTERNAL_API_KEY'] ??
+  process.env['ARXION_INTERNAL_API_KEY'] ??
+  '';
 
 // ── API Client ────────────────────────────────────────────────────────────────
 
